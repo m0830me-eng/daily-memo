@@ -45,7 +45,7 @@ DISCORD_WEBHOOK = os.environ.get(
     "",
 ).strip()
 
-DISCORD_USER_ID = "1383846907847381184"
+DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID", "").strip()
 
 HEADERS = {
     "Accept": "application/json, text/plain, */*",

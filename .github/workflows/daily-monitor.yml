@@ -1,0 +1,182 @@
+name: Daily Monitor
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    # KST 06:12
+    - cron: "12 21 * * *"
+
+    # KST 11:42
+    - cron: "42 2 * * *"
+
+    # KST 17:12
+    - cron: "12 8 * * *"
+
+    # KST 22:42
+    - cron: "42 13 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-m-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Set monitoring duration
+        id: duration
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CRON_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          event_name = os.environ.get("EVENT_NAME", "")
+          schedule = os.environ.get("CRON_SCHEDULE", "")
+          now = datetime.now(ZoneInfo("Asia/Seoul"))
+
+          next_times = {
+              "12 21 * * *": (11, 42),   # 06:12 -> 11:42
+              "42 2 * * *": (17, 12),    # 11:42 -> 17:12
+              "12 8 * * *": (22, 42),    # 17:12 -> 22:42
+              "42 13 * * *": (0, 0),     # 22:42 -> 24:00
+          }
+
+          def seconds_until(hour, minute, next_day=False):
+              if next_day:
+                  target = (now + timedelta(days=1)).replace(
+                      hour=hour,
+                      minute=minute,
+                      second=0,
+                      microsecond=0,
+                  )
+              else:
+                  target = now.replace(
+                      hour=hour,
+                      minute=minute,
+                      second=0,
+                      microsecond=0,
+                  )
+                  if target <= now:
+                      target += timedelta(days=1)
+
+              # 다음 작업과 겹치지 않도록 1분 전에 종료
+              return max(
+                  60,
+                  int((target - now).total_seconds()) - 60,
+              )
+
+          if event_name == "schedule":
+              if schedule not in next_times:
+                  print("seconds=600")
+                  raise SystemExit
+
+              hour, minute = next_times[schedule]
+
+              if hour == 0 and minute == 0:
+                  print(
+                      f"seconds={seconds_until(0, 0, next_day=True)}"
+                  )
+              else:
+                  print(
+                      f"seconds={seconds_until(hour, minute)}"
+                  )
+
+              raise SystemExit
+
+          # 수동 실행:
+          # 현재 시각이 감시시간(06:12~24:00)이면
+          # 다음 정규 실행 직전까지 계속 감시.
+          h, m = now.hour, now.minute
+
+          if (h, m) < (6, 12):
+              target = now.replace(
+                  hour=6,
+                  minute=12,
+                  second=0,
+                  microsecond=0,
+              )
+          elif (h, m) < (11, 42):
+              target = now.replace(
+                  hour=11,
+                  minute=42,
+                  second=0,
+                  microsecond=0,
+              )
+          elif (h, m) < (17, 12):
+              target = now.replace(
+                  hour=17,
+                  minute=12,
+                  second=0,
+                  microsecond=0,
+              )
+          elif (h, m) < (22, 42):
+              target = now.replace(
+                  hour=22,
+                  minute=42,
+                  second=0,
+                  microsecond=0,
+              )
+          else:
+              target = (now + timedelta(days=1)).replace(
+                  hour=0,
+                  minute=0,
+                  second=0,
+                  microsecond=0,
+              )
+
+          seconds = max(
+              60,
+              int((target - now).total_seconds()) - 60,
+          )
+          print(f"seconds={seconds}")
+          PY
+
+      - name: Run
+        env:
+          RUN_SECONDS: ${{ steps.duration.outputs.seconds }}
+          DISCORD_MEGABOX_COEX: ${{ secrets.DISCORD_MEGABOX_COEX }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+        run: |
+          python -u megabox_coex_alert.py
+
+      - name: Save state
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add seen_megabox_coex.json status_megabox_coex.json baseline_megabox_coex.done 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "No state changes"
+          else
+            git commit -m "Update daily state"
+            git pull --rebase
+            git push
+          fi

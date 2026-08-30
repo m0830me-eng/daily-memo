@@ -35,6 +35,9 @@ BRANCH_NAME = "메가박스 코엑스"
 DAYS = 50
 WORKERS = 2
 REQUEST_GAP = 0.17
+OVERLOAD_GAP_MAX = 0.35
+OVERLOAD_COOLDOWN_SECONDS = 30.0
+OVERLOAD_RECOVERY_CYCLES = 10
 RUN_SECONDS = int(os.environ.get("RUN_SECONDS", "120"))
 
 KST = ZoneInfo("Asia/Seoul")
@@ -84,6 +87,11 @@ BLOCK_STATUSES = {
 _thread_local = threading.local()
 _rate_lock = threading.Lock()
 _next_request_time = 0.0
+_adaptive_lock = threading.Lock()
+_active_request_gap = REQUEST_GAP
+_overload_until = 0.0
+_overload_events = 0
+_clean_cycle_streak = 0
 
 
 # ============================================================
@@ -328,21 +336,88 @@ def reset_rate_clock():
         _next_request_time = time.monotonic()
 
 
+def current_request_gap():
+    with _adaptive_lock:
+        return _active_request_gap
+
+
+def overload_event_count():
+    with _adaptive_lock:
+        return _overload_events
+
+
+def register_overload(reason):
+    global _active_request_gap, _overload_until, _overload_events, _clean_cycle_streak
+
+    now = time.monotonic()
+    should_log = False
+
+    with _adaptive_lock:
+        _overload_events += 1
+        _clean_cycle_streak = 0
+
+        # 같은 과부하 파동에서 두 worker가 동시에 실패해도
+        # 간격을 여러 번 올리거나 로그를 도배하지 않는다.
+        if now >= _overload_until:
+            _active_request_gap = min(
+                OVERLOAD_GAP_MAX,
+                max(0.22, _active_request_gap + 0.03),
+            )
+            _overload_until = now + OVERLOAD_COOLDOWN_SECONDS
+            should_log = True
+
+    if should_log:
+        print(
+            "⚠️ 메가박스 서버 과부하 감지 -> "
+            f"{OVERLOAD_COOLDOWN_SECONDS:.0f}초 자동 휴식 / "
+            f"요청간격 {current_request_gap():.2f}s로 완화 | "
+            f"원인: {reason}"
+        )
+
+
+def note_clean_cycle():
+    global _active_request_gap, _clean_cycle_streak
+
+    changed = None
+    with _adaptive_lock:
+        _clean_cycle_streak += 1
+        if (
+            _clean_cycle_streak >= OVERLOAD_RECOVERY_CYCLES
+            and _active_request_gap > REQUEST_GAP
+        ):
+            _active_request_gap = max(
+                REQUEST_GAP,
+                round(_active_request_gap - 0.01, 2),
+            )
+            _clean_cycle_streak = 0
+            changed = _active_request_gap
+
+    if changed is not None:
+        print(
+            "✅ 과부하 없이 10사이클 완료 -> "
+            f"요청간격 {changed:.2f}s로 한 단계 복구"
+        )
+
+
 def wait_rate_slot():
     global _next_request_time
 
-    with _rate_lock:
-        now = time.monotonic()
+    while True:
+        with _adaptive_lock:
+            overload_until = _overload_until
+            gap = _active_request_gap
 
-        if now < _next_request_time:
-            time.sleep(
-                _next_request_time - now
-            )
+        with _rate_lock:
             now = time.monotonic()
+            target = max(_next_request_time, overload_until)
 
-        _next_request_time = (
-            now + REQUEST_GAP
-        )
+            if now < target:
+                sleep_for = target - now
+            else:
+                _next_request_time = now + gap
+                return
+
+        time.sleep(sleep_for)
 
 
 def extract_movie_form_list(data):
@@ -430,10 +505,10 @@ def request_schedule(
                 f"{label} {date} "
                 f"HTTP={response.status_code}"
             )
+            register_overload(f"HTTP {response.status_code}")
             reset_thread_session()
 
             if attempt < 2:
-                time.sleep(0.5)
                 continue
 
             return None, True, last_error
@@ -443,6 +518,25 @@ def request_schedule(
                 f"{label} {date} "
                 f"HTTP={response.status_code}"
             )
+
+        response_preview = (
+            response.text[:160]
+            .replace("\n", " ")
+            .replace("\r", " ")
+        )
+
+        if "Workload is so high" in response_preview:
+            last_error = (
+                f"{label} {date} SERVER OVERLOAD "
+                f"PREVIEW={response_preview!r}"
+            )
+            register_overload("Workload is so high")
+            reset_thread_session()
+
+            if attempt < 2:
+                continue
+
+            return None, True, last_error
 
         try:
             data = response.json()
@@ -473,11 +567,12 @@ def request_schedule(
                 f"{repr(e)} PREVIEW={preview!r}"
             )
 
+            register_overload("HTTP 200 비정상 JSON")
             reset_thread_session()
 
             # HTTP 200이어도 비정상/빈 응답이면 한 번 새 세션으로 재시도.
+            # 과부하 보호가 전역 휴식/간격 완화를 담당한다.
             if attempt < 2:
-                time.sleep(0.5)
                 continue
 
             return None, True, last_error
@@ -1052,6 +1147,8 @@ def collect_all_50_days(progress=False):
         if date not in returned_dates:
             failed_dates.append(date)
 
+    error_examples = []
+
     for item in results:
         all_events.update(
             item["events"]
@@ -1061,10 +1158,17 @@ def collect_all_50_days(progress=False):
             failed_dates.append(
                 item["date"]
             )
-            print(
-                f"DATE ERROR {item['date']}: "
-                + " | ".join(item["logs"])
-            )
+            if len(error_examples) < 3:
+                error_examples.append(
+                    f"{item['date']}: " + " | ".join(item["logs"])
+                )
+
+    # 오류가 많아도 50개 날짜 로그를 전부 찍지 않는다.
+    if error_examples:
+        print(
+            "⚠️ API 오류 예시(최대 3건): "
+            + " || ".join(error_examples)
+        )
 
     # 중복 실패 날짜 제거 + 날짜순 정렬
     failed_dates = sorted(
@@ -1352,7 +1456,7 @@ def main():
 
     print(
         "REQUEST START GAP:",
-        f"{REQUEST_GAP:.2f}s FIXED",
+        f"{REQUEST_GAP:.2f}s START / overload auto-backoff",
     )
 
     print(
@@ -1370,7 +1474,7 @@ def main():
     )
     print(
         "LOG MODE: 기준값 10/20/30/40/50 진행 + "
-        "정상 감시는 10분 요약"
+        "정상 감시는 10분 요약 / 서버 과부하는 즉시 자동완화"
     )
 
     print(
@@ -1516,14 +1620,22 @@ def main():
             break
 
         cycle_number += 1
+        overload_before = overload_event_count()
 
         events, failed_dates = collect_all_50_days()
-        latest_counts = count_events(events)
+        cycle_overloads = overload_event_count() - overload_before
+
+        # 완전 정상 사이클일 때만 현재 개수를 최신값으로 교체한다.
+        # 서버 과부하로 50일이 비어도 메가토크/무대인사/DOLBY가 0으로 보이지 않게 한다.
+        if not failed_dates:
+            latest_counts = count_events(events)
+            if cycle_overloads == 0:
+                note_clean_cycle()
 
         if failed_dates:
             print(
-                "FAILED DATES:",
-                ", ".join(failed_dates),
+                f"⚠️ 이번 사이클 API 실패: {len(failed_dates)}/50 날짜 | "
+                f"현재 요청간격 {current_request_gap():.2f}s"
             )
 
         new_count, _sent_keys = send_new_events(
@@ -1562,8 +1674,13 @@ def main():
         now_mono = time.monotonic()
         if now_mono - heartbeat_started >= HEARTBEAT_INTERVAL:
             mins = int((now_mono - heartbeat_started) // 60)
+            health = (
+                "💚 정상 감시중"
+                if heartbeat_failed_dates == 0
+                else "⚠️ 감시중(일부 API 오류)"
+            )
             print(
-                "💚 정상 감시중 | "
+                f"{health} | "
                 f"최근 {mins}분 {heartbeat_cycles}사이클 완료 | "
                 f"누적 CYCLE #{cycle_number} | "
                 f"메가토크 {latest_counts['메가토크']} | "
@@ -1573,7 +1690,8 @@ def main():
                 f"매진변화 {heartbeat_soldout} | "
                 f"취소표 {heartbeat_cancel} | "
                 f"공식선행 {heartbeat_official} | "
-                f"오류날짜 {heartbeat_failed_dates}"
+                f"API실패 {heartbeat_failed_dates}건 | "
+                f"현재간격 {current_request_gap():.2f}s"
             )
 
             heartbeat_started = now_mono

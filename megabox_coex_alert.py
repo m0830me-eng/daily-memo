@@ -2,6 +2,8 @@ import os
 import json
 import time
 import html
+import hashlib
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -13,7 +15,7 @@ from curl_cffi import requests
 # ============================================================
 # MEGABOX COEX MONITOR
 # 감지 대상:
-# - 메가토크
+# - 메가토크 (GV / 관객과의 대화 포함)
 # - 무대인사
 # - DOLBY CINEMA
 #
@@ -43,11 +45,14 @@ SCHEDULE_API = (
 )
 
 STATE_FILE = "seen_megabox_coex.json"
+STATUS_FILE = "status_megabox_coex.json"
 BASELINE_FILE = "baseline_megabox_coex.done"
+EVENT_PAGE_URL = "https://www.megabox.co.kr/event"
+OFFICIAL_EVENT_CHECK_INTERVAL = 30.0
 
 # 기존 14일 baseline을 자동으로 무효화해서
 # 업그레이드 첫 실행 때 50일 전체를 조용히 새 기준값으로 등록한다.
-BASELINE_SCHEMA = "MEGABOX_COEX_50DAYS_2WORKERS_GAP017_V1"
+BASELINE_SCHEMA = "MEGABOX_COEX_50DAYS_GAP017_STATUS_EVENT_V2"
 
 DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_MEGABOX_COEX",
@@ -205,6 +210,71 @@ def save_seen(seen):
             "STATE SAVE ERROR:",
             repr(e),
         )
+
+
+def load_status():
+    if not os.path.exists(STATUS_FILE):
+        return {
+            "shows": {},
+            "official_events": {},
+        }
+
+    try:
+        with open(
+            STATUS_FILE,
+            "r",
+            encoding="utf-8",
+        ) as f:
+            data = json.load(f)
+
+        if not isinstance(data, dict):
+            raise ValueError("status root is not dict")
+
+        shows = data.get("shows")
+        official_events = data.get("official_events")
+
+        return {
+            "shows": shows if isinstance(shows, dict) else {},
+            "official_events": (
+                official_events
+                if isinstance(official_events, dict)
+                else {}
+            ),
+        }
+
+    except Exception as e:
+        print("STATUS LOAD ERROR:", repr(e))
+        return {
+            "shows": {},
+            "official_events": {},
+        }
+
+
+def save_status(status):
+    try:
+        with open(
+            STATUS_FILE,
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                status,
+                f,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+
+        print(
+            "STATUS SAVED:",
+            len(status.get("shows", {})),
+            "shows /",
+            len(status.get("official_events", {})),
+            "official events",
+        )
+
+    except Exception as e:
+        print("STATUS SAVE ERROR:", repr(e))
 
 
 def baseline_done():
@@ -457,7 +527,21 @@ def is_stage(row):
 
 
 def is_megatalk(row):
-    return "메가토크" in all_text(row)
+    text = all_text(row)
+    compact = re.sub(r"\s+", "", text)
+    upper = text.upper()
+
+    if "메가토크" in compact:
+        return True
+
+    if "관객과의대화" in compact:
+        return True
+
+    # 메가박스가 행사명을 GV로만 쓰는 경우도 메가토크로 통합.
+    if re.search(r"(?<![A-Z0-9])GV(?![A-Z0-9])", upper):
+        return True
+
+    return False
 
 
 def is_dolby(row):
@@ -607,6 +691,50 @@ def event_key(
     ])
 
 
+def to_int(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(str(value).replace(",", "").strip())
+    except Exception:
+        return None
+
+
+def get_rest_seat(row):
+    for key in (
+        "restSeatCnt",
+        "restSeatCount",
+        "remainSeatCnt",
+        "remainSeatCount",
+    ):
+        value = to_int(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def get_total_seat(row):
+    for key in (
+        "totSeatCnt",
+        "totSeatCount",
+        "theabSeatCnt",
+        "totalSeatCnt",
+    ):
+        value = to_int(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def booking_status(event):
+    rest = event.get("rest_seat")
+
+    if isinstance(rest, int):
+        return "SOLD_OUT" if rest <= 0 else "OPEN"
+
+    return "UNKNOWN"
+
+
 def normalize_event(
     date,
     row,
@@ -621,7 +749,165 @@ def normalize_event(
         "screen": get_screen(row),
         "schedule_no": get_schedule_no(row),
         "link": make_booking_link(row),
+        "rest_seat": get_rest_seat(row),
+        "total_seat": get_total_seat(row),
     }
+
+
+# ============================================================
+# Official event page early signal (best effort)
+# ============================================================
+
+def compact_ws(text):
+    return re.sub(r"\s+", " ", clean_text(text)).strip()
+
+
+def strip_tags(text):
+    text = re.sub(
+        r"(?is)<(script|style).*?>.*?</\1>",
+        " ",
+        text,
+    )
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    return compact_ws(html.unescape(text))
+
+
+def classify_event_text(text):
+    compact = re.sub(r"\s+", "", text)
+    upper = text.upper()
+
+    if "무대인사" in compact or "舞台挨拶" in text:
+        return "무대인사"
+
+    if (
+        "메가토크" in compact
+        or "관객과의대화" in compact
+        or re.search(r"(?<![A-Z0-9])GV(?![A-Z0-9])", upper)
+    ):
+        return "메가토크"
+
+    return None
+
+
+def fetch_official_event_signals():
+    """공식 이벤트 페이지 HTML 안에서 코엑스 관련 선행 신호를 찾는다.
+
+    메가박스 이벤트 목록은 일부가 동적으로 로드될 수 있어서 이 소스는
+    '선행 보조 신호'로만 사용한다. 실제 회차 확정은 schedulePage.do가 담당한다.
+    """
+    try:
+        session = requests.Session(impersonate="chrome")
+        response = session.get(
+            EVENT_PAGE_URL,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "ko-KR,ko;q=0.9",
+                "Referer": "https://www.megabox.co.kr/",
+            },
+            timeout=10,
+        )
+
+        if response.status_code != 200:
+            print(
+                "OFFICIAL EVENT PAGE:",
+                response.status_code,
+                "- skip",
+            )
+            return None
+
+        raw = response.text
+        visible = strip_tags(raw)
+        signals = {}
+
+        # eventNo가 HTML 안에 있으면 그것을 가장 안정적인 키로 쓴다.
+        event_no_matches = list(
+            re.finditer(r"eventNo=(\d+)", raw, flags=re.I)
+        )
+
+        # 키워드 주변에 '코엑스'가 같이 있을 때만 코엑스 선행 신호로 인정.
+        keyword_re = re.compile(
+            r"무대인사|舞台挨拶|메가토크|관객\s*과의\s*대화|(?<![A-Z0-9])GV(?![A-Z0-9])",
+            flags=re.I,
+        )
+
+        for match in keyword_re.finditer(visible):
+            start = max(0, match.start() - 350)
+            end = min(len(visible), match.end() + 350)
+            context = compact_ws(visible[start:end])
+
+            if "코엑스" not in context:
+                continue
+
+            event_type = classify_event_text(context)
+            if event_type is None:
+                continue
+
+            # 너무 긴 문맥은 알림/키 안정성을 위해 축약.
+            snippet = context[:500]
+
+            # 원본 HTML에서 eventNo를 안정적으로 연결하기 어렵다면
+            # 문맥 해시를 사용한다. 같은 페이지 내용이면 중복되지 않는다.
+            signature = hashlib.sha1(
+                (event_type + "|" + snippet).encode("utf-8")
+            ).hexdigest()
+
+            signals[signature] = {
+                "type": event_type,
+                "snippet": snippet,
+                "url": EVENT_PAGE_URL,
+                "detected_at_kst": now_kst().isoformat(timespec="seconds"),
+            }
+
+        print(
+            "OFFICIAL EVENT SIGNALS:",
+            len(signals),
+        )
+        return signals
+
+    except Exception as e:
+        print("OFFICIAL EVENT PAGE ERROR:", repr(e))
+        return None
+
+
+def send_official_signal(signal):
+    lines = []
+
+    if DISCORD_USER_ID:
+        lines.extend([
+            f"<@{DISCORD_USER_ID}>",
+            "",
+        ])
+
+    event_type = signal.get("type") or "이벤트"
+
+    lines.extend([
+        f"**📣 메가박스 코엑스 · {event_type} 공식 이벤트 선행 감지**",
+        "",
+        "메가박스 공식 이벤트 페이지에서 코엑스 관련 신호가 확인됐습니다.",
+        "아직 실제 상영 회차가 시간표에 나오지 않았을 수 있습니다.",
+        "",
+        f"🔎 {signal.get('snippet', '')}",
+        f"🎟️ {signal.get('url', EVENT_PAGE_URL)}",
+    ])
+
+    return send_discord("\n".join(lines))
+
+
+def process_official_signals(signals, official_state):
+    if signals is None:
+        return 0
+
+    sent = 0
+
+    for key, signal in signals.items():
+        if key in official_state:
+            continue
+
+        if send_official_signal(signal):
+            official_state[key] = signal
+            sent += 1
+
+    return sent
 
 
 # ============================================================
@@ -788,13 +1074,27 @@ def collect_all_50_days():
 
 
 # ============================================================
-# Discord grouped notification
+# Discord / booking-state transitions
 # ============================================================
 
-def send_new_events(
-    events,
-    seen,
-):
+def state_record(event, status=None):
+    current_status = status or booking_status(event)
+    return {
+        "status": current_status,
+        "date": event.get("date", ""),
+        "type": event.get("type", ""),
+        "movie": event.get("movie", ""),
+        "start": event.get("start", ""),
+        "end": event.get("end", ""),
+        "screen": event.get("screen", ""),
+        "schedule_no": event.get("schedule_no", ""),
+        "rest_seat": event.get("rest_seat"),
+        "total_seat": event.get("total_seat"),
+        "updated_at_kst": now_kst().isoformat(timespec="seconds"),
+    }
+
+
+def send_new_events(events, seen):
     new_events = [
         (key, event)
         for key, event in events.items()
@@ -802,7 +1102,7 @@ def send_new_events(
     ]
 
     if not new_events:
-        return 0
+        return 0, set()
 
     groups = {}
 
@@ -811,47 +1111,29 @@ def send_new_events(
             event["date"],
             event["type"],
         )
-
-        groups.setdefault(
-            group_key,
-            [],
-        ).append(
-            (key, event)
-        )
+        groups.setdefault(group_key, []).append((key, event))
 
     sent_count = 0
+    sent_keys = set()
 
-    for (
-        date,
-        event_type,
-    ), items in sorted(
-        groups.items()
-    ):
-        if event_type == "DOLBY":
-            title = (
-                "🎉 메가박스 코엑스 "
-                "DOLBY CINEMA 새 상영 일정"
-            )
+    for (date, event_type), items in sorted(groups.items()):
+        display_type = (
+            "DOLBY CINEMA"
+            if event_type == "DOLBY"
+            else event_type
+        )
 
-        elif event_type == "무대인사":
-            title = (
-                "🎉 메가박스 코엑스 "
-                "무대인사 새 상영 일정"
-            )
-
-        else:
-            title = (
-                "🎉 메가박스 코엑스 "
-                "메가토크 새 상영 일정"
-            )
+        title = (
+            f"🎬 메가박스 코엑스 · "
+            f"{display_type} 새 상영 일정"
+        )
 
         lines = []
-
         if DISCORD_USER_ID:
-            lines.append(
-                f"<@{DISCORD_USER_ID}>"
-            )
-            lines.append("")
+            lines.extend([
+                f"<@{DISCORD_USER_ID}>",
+                "",
+            ])
 
         lines.extend([
             f"**{title}**",
@@ -869,34 +1151,25 @@ def send_new_events(
         for key, event in items:
             start = event["start"]
             end = event["end"]
-
-            time_text = (
-                f"{start}~{end}"
-                if end
-                else start
-            )
-
+            time_text = f"{start}~{end}" if end else start
             movie = event["movie"]
             screen = event["screen"]
+            linked_movie = f"[{movie}]({event['link']})"
 
-            linked_movie = (
-                f"[{movie}]"
-                f"({event['link']})"
-            )
+            seat = ""
+            if isinstance(event.get("rest_seat"), int):
+                seat = f" · 잔여 {event['rest_seat']}"
+                if isinstance(event.get("total_seat"), int):
+                    seat += f"/{event['total_seat']}"
 
             if screen:
                 lines.append(
-                    f"• {time_text} — "
-                    f"{linked_movie} | "
-                    f"코엑스 / {screen}"
+                    f"🎟️ {time_text} · {linked_movie} · {screen}{seat}"
                 )
             else:
                 lines.append(
-                    f"• {time_text} — "
-                    f"{linked_movie}"
+                    f"🎟️ {time_text} · {linked_movie}{seat}"
                 )
-
-        message = "\n".join(lines)
 
         print(
             "NEW EVENT GROUP:",
@@ -906,12 +1179,100 @@ def send_new_events(
             len(items),
         )
 
-        if send_discord(message):
+        if send_discord("\n".join(lines)):
             for key, _ in items:
                 seen.add(key)
+                sent_keys.add(key)
                 sent_count += 1
 
-    return sent_count
+    return sent_count, sent_keys
+
+
+def send_cancel_ticket(event):
+    display_type = (
+        "DOLBY CINEMA"
+        if event.get("type") == "DOLBY"
+        else event.get("type")
+    )
+
+    lines = []
+    if DISCORD_USER_ID:
+        lines.extend([
+            f"<@{DISCORD_USER_ID}>",
+            "",
+        ])
+
+    start = event.get("start", "")
+    end = event.get("end", "")
+    time_text = f"{start}~{end}" if end else start
+    movie = event.get("movie") or "영화명 확인 필요"
+    screen = event.get("screen") or "상영관 정보 없음"
+    rest = event.get("rest_seat")
+    total = event.get("total_seat")
+
+    seat_text = ""
+    if isinstance(rest, int):
+        seat_text = f"\n💺 잔여 {rest}"
+        if isinstance(total, int):
+            seat_text += f" / {total}"
+
+    lines.extend([
+        f"**🎟️ 메가박스 코엑스 · {display_type} 취소표가 나타났습니다**",
+        f"📅 {pretty_date(event['date'])}",
+        f"🎟️ {time_text} · [{movie}]({event['link']}) · {screen}{seat_text}",
+    ])
+
+    return send_discord("\n".join(lines))
+
+
+def process_booking_states(events, show_state):
+    cancel_sent = 0
+    sold_out_new = 0
+
+    for key, event in events.items():
+        current = booking_status(event)
+        previous_record = show_state.get(key) or {}
+        previous = previous_record.get("status")
+
+        # 처음 본 회차는 현재 상태만 저장.
+        # 새 상영 일정 알림 자체는 seen 로직이 별도로 담당한다.
+        if previous is None:
+            show_state[key] = state_record(event, current)
+            continue
+
+        if current == "SOLD_OUT":
+            if previous != "SOLD_OUT":
+                sold_out_new += 1
+                print(
+                    "SOLD OUT STORED:",
+                    event.get("type"),
+                    event.get("movie"),
+                    event.get("date"),
+                    event.get("start"),
+                )
+
+            record = state_record(event, "SOLD_OUT")
+            record["sold_out_since_kst"] = (
+                previous_record.get("sold_out_since_kst")
+                if previous == "SOLD_OUT"
+                else now_kst().isoformat(timespec="seconds")
+            )
+            show_state[key] = record
+            continue
+
+        if current == "OPEN" and previous == "SOLD_OUT":
+            if send_cancel_ticket(event):
+                cancel_sent += 1
+                show_state[key] = state_record(event, "OPEN")
+            else:
+                # 전송 실패면 SOLD_OUT 상태를 유지해 다음 사이클에 재시도.
+                continue
+            continue
+
+        # OPEN/UNKNOWN 등 일반 상태 갱신
+        show_state[key] = state_record(event, current)
+
+    return cancel_sent, sold_out_new
 
 
 # ============================================================
@@ -971,7 +1332,7 @@ def main():
 
     print(
         "TARGET: "
-        "메가토크 / 무대인사 / DOLBY CINEMA"
+        "메가토크(GV 포함) / 무대인사 / DOLBY CINEMA"
     )
 
     print(
@@ -1044,8 +1405,8 @@ def main():
         print("INITIAL 50-DAY BASELINE")
         print("=" * 72)
         print(
-            "현재 50일 전체 메가토크 / 무대인사 / DOLBY를 "
-            "알림 없이 기준값으로 등록합니다."
+            "현재 50일 전체 메가토크(GV 포함) / 무대인사 / DOLBY와 "
+            "공식 이벤트 선행 신호를 알림 없이 기준값으로 등록합니다."
         )
 
         events, failed_dates = (
@@ -1068,14 +1429,31 @@ def main():
             events.keys()
         )
 
+        official_signals = fetch_official_event_signals()
+        if official_signals is None:
+            official_signals = {}
+
+        status = {
+            "shows": {
+                key: state_record(event)
+                for key, event in events.items()
+            },
+            "official_events": official_signals,
+        }
+
         print(
             "BASELINE EVENT COUNT:",
             len(seen),
+        )
+        print(
+            "BASELINE OFFICIAL SIGNAL COUNT:",
+            len(official_signals),
         )
 
         print_counts(events)
 
         save_seen(seen)
+        save_status(status)
         mark_baseline_done()
 
         print("BASELINE COMPLETE")
@@ -1090,8 +1468,12 @@ def main():
     # --------------------------------------------------------
 
     seen = load_seen()
+    status = load_status()
+    show_state = status["shows"]
+    official_state = status["official_events"]
     monitor_started = time.monotonic()
     cycle_number = 0
+    last_official_event_check = 0.0
 
     while True:
         total_elapsed = (
@@ -1140,17 +1522,48 @@ def main():
                 ),
             )
 
-        new_count = send_new_events(
+        new_count, _sent_keys = send_new_events(
             events,
             seen,
         )
+
+        cancel_count, sold_out_count = process_booking_states(
+            events,
+            show_state,
+        )
+
+        official_count = 0
+        now_mono = time.monotonic()
+        if (
+            now_mono - last_official_event_check
+            >= OFFICIAL_EVENT_CHECK_INTERVAL
+        ):
+            official_signals = fetch_official_event_signals()
+            official_count = process_official_signals(
+                official_signals,
+                official_state,
+            )
+            last_official_event_check = now_mono
 
         print(
             "NEW EVENT COUNT:",
             new_count,
         )
+        print(
+            "SOLD OUT STATE CHANGES:",
+            sold_out_count,
+        )
+        print(
+            "CANCEL TICKET ALERTS:",
+            cancel_count,
+        )
+        print(
+            "OFFICIAL EVENT EARLY ALERTS:",
+            official_count,
+        )
 
         save_seen(seen)
+        save_status(status)
 
         cycle_elapsed = (
             time.monotonic()
@@ -1168,6 +1581,7 @@ def main():
         )
 
     save_seen(seen)
+    save_status(status)
 
     print(
         "FINAL SEEN STATE:",

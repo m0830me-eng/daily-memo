@@ -1,0 +1,28 @@
+name: Megabox COEX 50-Day Speed Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run 50-day speed test
+        env:
+          RUN_SECONDS: "1800"
+        run: |
+          python -u megabox_coex_50day_speed_test.py

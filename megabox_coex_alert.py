@@ -49,10 +49,11 @@ STATUS_FILE = "status_megabox_coex.json"
 BASELINE_FILE = "baseline_megabox_coex.done"
 EVENT_PAGE_URL = "https://www.megabox.co.kr/event"
 OFFICIAL_EVENT_CHECK_INTERVAL = 30.0
+HEARTBEAT_INTERVAL = 600.0  # 10분마다 Actions 요약 로그
 
 # 기존 14일 baseline을 자동으로 무효화해서
 # 업그레이드 첫 실행 때 50일 전체를 조용히 새 기준값으로 등록한다.
-BASELINE_SCHEMA = "MEGABOX_COEX_50DAYS_GAP017_STATUS_EVENT_V2"
+BASELINE_SCHEMA = "MEGABOX_COEX_50DAYS_GAP017_STATUS_EVENT_V3"
 
 DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_MEGABOX_COEX",
@@ -200,11 +201,6 @@ def save_seen(seen):
                 indent=2,
             )
 
-        print(
-            "STATE SAVED:",
-            len(seen),
-        )
-
     except Exception as e:
         print(
             "STATE SAVE ERROR:",
@@ -264,14 +260,6 @@ def save_status(status):
                 indent=2,
                 sort_keys=True,
             )
-
-        print(
-            "STATUS SAVED:",
-            len(status.get("shows", {})),
-            "shows /",
-            len(status.get("official_events", {})),
-            "official events",
-        )
 
     except Exception as e:
         print("STATUS SAVE ERROR:", repr(e))
@@ -727,6 +715,11 @@ def get_total_seat(row):
 
 
 def booking_status(event):
+    # 메가박스 원본에 실제 "매진" 문구가 있으면 좌석수 필드보다 우선한다.
+    # (사용자 화면/응답 형식이 달라져도 매진 -> 재오픈을 놓치지 않기 위함)
+    if event.get("sold_out_explicit"):
+        return "SOLD_OUT"
+
     rest = event.get("rest_seat")
 
     if isinstance(rest, int):
@@ -740,6 +733,14 @@ def normalize_event(
     row,
     event_type,
 ):
+    row_text = all_text(row)
+    row_upper = row_text.upper()
+    sold_out_explicit = (
+        "매진" in row_text
+        or "SOLD_OUT" in row_upper
+        or "SOLDOUT" in row_upper
+    )
+
     return {
         "date": date,
         "type": event_type,
@@ -751,6 +752,7 @@ def normalize_event(
         "link": make_booking_link(row),
         "rest_seat": get_rest_seat(row),
         "total_seat": get_total_seat(row),
+        "sold_out_explicit": sold_out_explicit,
     }
 
 
@@ -858,10 +860,6 @@ def fetch_official_event_signals():
                 "detected_at_kst": now_kst().isoformat(timespec="seconds"),
             }
 
-        print(
-            "OFFICIAL EVENT SIGNALS:",
-            len(signals),
-        )
         return signals
 
     except Exception as e:
@@ -1000,7 +998,7 @@ def collect_date(
     }
 
 
-def collect_all_50_days():
+def collect_all_50_days(progress=False):
     all_events = {}
     failed_dates = []
     results = []
@@ -1023,6 +1021,7 @@ def collect_all_50_days():
             )
         ]
 
+        completed = 0
         for future in as_completed(futures):
             try:
                 results.append(
@@ -1033,6 +1032,12 @@ def collect_all_50_days():
                     "DATE FUTURE ERROR:",
                     repr(e),
                 )
+            finally:
+                completed += 1
+                if progress and completed in {10, 20, 30, 40, 50}:
+                    print(
+                        f"⏳ 기준값 진행: {completed}/50 날짜 처리 완료"
+                    )
 
     results.sort(
         key=lambda item: item["index"]
@@ -1048,14 +1053,6 @@ def collect_all_50_days():
             failed_dates.append(date)
 
     for item in results:
-        print(
-            f"--- DATE {item['index']}/50 "
-            f"{item['date']} ---"
-        )
-
-        for line in item["logs"]:
-            print(line)
-
         all_events.update(
             item["events"]
         )
@@ -1063,6 +1060,10 @@ def collect_all_50_days():
         if item["problem"]:
             failed_dates.append(
                 item["date"]
+            )
+            print(
+                f"DATE ERROR {item['date']}: "
+                + " | ".join(item["logs"])
             )
 
     # 중복 실패 날짜 제거 + 날짜순 정렬
@@ -1090,6 +1091,7 @@ def state_record(event, status=None):
         "schedule_no": event.get("schedule_no", ""),
         "rest_seat": event.get("rest_seat"),
         "total_seat": event.get("total_seat"),
+        "sold_out_explicit": bool(event.get("sold_out_explicit")),
         "updated_at_kst": now_kst().isoformat(timespec="seconds"),
     }
 
@@ -1269,7 +1271,19 @@ def process_booking_states(events, show_state):
                 continue
             continue
 
-        # OPEN/UNKNOWN 등 일반 상태 갱신
+        # 응답에서 좌석 필드가 일시적으로 빠진 UNKNOWN은 기존 상태를 지우지 않는다.
+        # 특히 SOLD_OUT 기억이 UNKNOWN으로 덮이면 다음 OPEN 때 취소표를 놓칠 수 있다.
+        if current == "UNKNOWN":
+            if previous is None:
+                show_state[key] = state_record(event, "UNKNOWN")
+            else:
+                preserved = state_record(event, previous)
+                if previous_record.get("sold_out_since_kst"):
+                    preserved["sold_out_since_kst"] = previous_record["sold_out_since_kst"]
+                show_state[key] = preserved
+            continue
+
+        # OPEN 등 일반 상태 갱신
         show_state[key] = state_record(event, current)
 
     return cancel_sent, sold_out_new
@@ -1279,7 +1293,7 @@ def process_booking_states(events, show_state):
 # Diagnostics
 # ============================================================
 
-def print_counts(events):
+def count_events(events):
     counts = {
         "메가토크": 0,
         "무대인사": 0,
@@ -1287,28 +1301,19 @@ def print_counts(events):
     }
 
     for event in events.values():
-        event_type = event.get(
-            "type",
-            "",
-        )
-
+        event_type = event.get("type", "")
         if event_type in counts:
             counts[event_type] += 1
 
-    print(
-        "MEGATALK COUNT:",
-        counts["메가토크"],
-    )
+    return counts
 
-    print(
-        "무대인사 COUNT:",
-        counts["무대인사"],
-    )
 
-    print(
-        "DOLBY COUNT:",
-        counts["DOLBY"],
-    )
+def print_counts(events):
+    counts = count_events(events)
+
+    print("MEGATALK COUNT:", counts["메가토크"])
+    print("무대인사 COUNT:", counts["무대인사"])
+    print("DOLBY COUNT:", counts["DOLBY"])
 
 
 # ============================================================
@@ -1353,6 +1358,19 @@ def main():
     print(
         "NEXT CYCLE: "
         "IMMEDIATELY AFTER EACH 50-DAY SCAN"
+    )
+
+    print(
+        "EARLY SIGNAL: 공식 이벤트 페이지 / "
+        "메가토크(GV·관객과의 대화 포함) / 무대인사"
+    )
+    print(
+        "REOPEN: 매진 또는 잔여 0 -> 좌석 재발생 시 "
+        "'취소표가 나타났습니다'"
+    )
+    print(
+        "LOG MODE: 기준값 10/20/30/40/50 진행 + "
+        "정상 감시는 10분 요약"
     )
 
     print(
@@ -1410,7 +1428,7 @@ def main():
         )
 
         events, failed_dates = (
-            collect_all_50_days()
+            collect_all_50_days(progress=True)
         )
 
         if failed_dates:
@@ -1458,10 +1476,13 @@ def main():
 
         print("BASELINE COMPLETE")
         print(
-            "이번 실행에서는 "
+            "이번 기준값 등록에서는 "
             "Discord 알림을 보내지 않았습니다."
         )
-        return
+        print(
+            "✅ 기준값 등록 완료 - 이 실행을 종료하지 않고 "
+            "다음 정규 자동실행 1분 전까지 계속 감시합니다."
+        )
 
     # --------------------------------------------------------
     # 정상 감시
@@ -1475,6 +1496,15 @@ def main():
     cycle_number = 0
     last_official_event_check = 0.0
 
+    heartbeat_started = monitor_started
+    heartbeat_cycles = 0
+    heartbeat_new = 0
+    heartbeat_cancel = 0
+    heartbeat_soldout = 0
+    heartbeat_official = 0
+    heartbeat_failed_dates = 0
+    latest_counts = {"메가토크": 0, "무대인사": 0, "DOLBY": 0}
+
     while True:
         total_elapsed = (
             time.monotonic()
@@ -1482,44 +1512,18 @@ def main():
         )
 
         if total_elapsed >= RUN_SECONDS:
-            print(
-                "MONITOR TIME FINISHED"
-            )
+            print("MONITOR TIME FINISHED")
             break
 
         cycle_number += 1
-        cycle_started = time.monotonic()
 
-        print()
-        print("=" * 72)
-        print(
-            f"CYCLE #{cycle_number} | "
-            f"{now_kst().strftime('%Y-%m-%d %H:%M:%S')} KST | "
-            f"GAP={REQUEST_GAP:.2f}s"
-        )
-        print(
-            "50 DAYS / 2 WORKERS FULL SCAN START"
-        )
-        print("=" * 72)
-
-        events, failed_dates = (
-            collect_all_50_days()
-        )
-
-        print()
-        print(
-            "FULL EVENT COUNT:",
-            len(events),
-        )
-
-        print_counts(events)
+        events, failed_dates = collect_all_50_days()
+        latest_counts = count_events(events)
 
         if failed_dates:
             print(
                 "FAILED DATES:",
-                ", ".join(
-                    failed_dates
-                ),
+                ", ".join(failed_dates),
             )
 
         new_count, _sent_keys = send_new_events(
@@ -1545,40 +1549,40 @@ def main():
             )
             last_official_event_check = now_mono
 
-        print(
-            "NEW EVENT COUNT:",
-            new_count,
-        )
-        print(
-            "SOLD OUT STATE CHANGES:",
-            sold_out_count,
-        )
-        print(
-            "CANCEL TICKET ALERTS:",
-            cancel_count,
-        )
-        print(
-            "OFFICIAL EVENT EARLY ALERTS:",
-            official_count,
-        )
-
         save_seen(seen)
         save_status(status)
 
-        cycle_elapsed = (
-            time.monotonic()
-            - cycle_started
-        )
+        heartbeat_cycles += 1
+        heartbeat_new += new_count
+        heartbeat_cancel += cancel_count
+        heartbeat_soldout += sold_out_count
+        heartbeat_official += official_count
+        heartbeat_failed_dates += len(failed_dates)
 
-        print(
-            "CYCLE ELAPSED:",
-            f"{cycle_elapsed:.2f}s",
-        )
+        now_mono = time.monotonic()
+        if now_mono - heartbeat_started >= HEARTBEAT_INTERVAL:
+            mins = int((now_mono - heartbeat_started) // 60)
+            print(
+                "💚 정상 감시중 | "
+                f"최근 {mins}분 {heartbeat_cycles}사이클 완료 | "
+                f"누적 CYCLE #{cycle_number} | "
+                f"메가토크 {latest_counts['메가토크']} | "
+                f"무대인사 {latest_counts['무대인사']} | "
+                f"DOLBY {latest_counts['DOLBY']} | "
+                f"새 일정 {heartbeat_new} | "
+                f"매진변화 {heartbeat_soldout} | "
+                f"취소표 {heartbeat_cancel} | "
+                f"공식선행 {heartbeat_official} | "
+                f"오류날짜 {heartbeat_failed_dates}"
+            )
 
-        print(
-            "WAIT: 0s "
-            "(next 50-day scan starts immediately)"
-        )
+            heartbeat_started = now_mono
+            heartbeat_cycles = 0
+            heartbeat_new = 0
+            heartbeat_cancel = 0
+            heartbeat_soldout = 0
+            heartbeat_official = 0
+            heartbeat_failed_dates = 0
 
     save_seen(seen)
     save_status(status)

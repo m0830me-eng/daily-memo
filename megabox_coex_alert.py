@@ -22,10 +22,12 @@ from curl_cffi import requests
 # 코엑스 지점번호: 1351
 #
 # 최종 감시 방식:
-# - 한국시간 기준 오늘~49일 뒤 = 50일 전체 유지
+# - 한국시간 기준 오늘~42일 뒤 = 43일 전체 감시
 # - GENERAL / DOLBY 모두 같은 날짜 구간 주기로 분산 감시
-# - 오늘~+4일 90초 / +5~+14일 30초 / +15~+30일 60초 / +31~+49일 300초
-# - 매진이 잡힌 날짜는 30초 감시로 자동 승격
+# - 오늘(0일) 20초 / 내일(+1일) 20초 / +2~+4일 90초
+# - +5~+14일 30초 / +15~+30일 60초 / +31~+42일 300초
+# - 매진이 잡힌 날짜는 20초 감시로 자동 승격
+# - 매시 00분/30분: +4~+21일 18일을 2 workers + 0.17초로 빠른 전체점검
 # - 2 workers 고정, 모든 API 요청 시작 간격 최소 0.17초
 # - 서버 과부하 시 현재 요청 묶음 중단 + 60/120/300초 단계 휴식
 # ============================================================
@@ -33,7 +35,7 @@ from curl_cffi import requests
 BRANCH_NO = "1351"
 BRANCH_NAME = "메가박스 코엑스"
 
-DAYS = 50
+DAYS = 43
 WORKERS = 2
 REQUEST_GAP = 0.17
 OVERLOAD_GAP_STEPS = (0.30, 0.40, 0.50)
@@ -56,16 +58,22 @@ OFFICIAL_EVENT_CHECK_INTERVAL = 120.0
 HEARTBEAT_INTERVAL = 600.0  # 10분마다 Actions 요약 로그
 
 # GENERAL / DOLBY 공통 날짜별 감시 주기
-INTERVAL_0_4 = 90.0
+INTERVAL_0_1 = 20.0
+INTERVAL_2_4 = 90.0
 INTERVAL_5_14 = 30.0
 INTERVAL_15_30 = 60.0
-INTERVAL_31_49 = 300.0
-SOLD_OUT_DATE_INTERVAL = 30.0
+INTERVAL_31_42 = 300.0
+SOLD_OUT_DATE_INTERVAL = 20.0
 MAX_DUE_DATES_PER_BATCH = 2
 
+# 정각/30분 빠른 전체점검: +4~+21일 = 18일
+SAFETY_SCAN_START_OFFSET = 4
+SAFETY_SCAN_END_OFFSET = 21
+SAFETY_SCAN_EVERY_MINUTES = 30
+
 # 기존 14일 baseline을 자동으로 무효화해서
-# 업그레이드 첫 실행 때 50일 전체를 조용히 새 기준값으로 등록한다.
-BASELINE_SCHEMA = "MEGABOX_COEX_50DAYS_GAP017_STATUS_EVENT_V3"
+# 업그레이드 첫 실행 때 43일 전체를 조용히 새 기준값으로 등록한다.
+BASELINE_SCHEMA = "MEGABOX_COEX_43DAYS_STAGGERED_0030_V1"
 
 DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_MEGABOX_COEX",
@@ -120,6 +128,22 @@ def make_dates():
         (today + timedelta(days=i)).strftime("%Y%m%d")
         for i in range(DAYS)
     ]
+
+
+def make_safety_scan_dates():
+    today = now_kst()
+    return [
+        (today + timedelta(days=i)).strftime("%Y%m%d")
+        for i in range(SAFETY_SCAN_START_OFFSET, SAFETY_SCAN_END_OFFSET + 1)
+    ]
+
+
+def next_halfhour_boundary(dt):
+    """Return the next KST :00 or :30 boundary strictly after dt."""
+    base = dt.replace(second=0, microsecond=0)
+    if dt.minute < 30:
+        return base.replace(minute=30)
+    return (base.replace(minute=0) + timedelta(hours=1))
 
 
 def pretty_date(date):
@@ -1030,7 +1054,7 @@ def process_official_signals(signals, official_state):
 
 
 # ============================================================
-# Collect - 50 days / 2 workers / adaptive overload protection
+# Collect - 43 days / 2 workers / adaptive overload protection
 # ============================================================
 
 def collect_date(
@@ -1128,7 +1152,7 @@ def collect_date(
     }
 
 
-def collect_all_50_days(progress=False):
+def collect_all_days(progress=False):
     all_events = {}
     failed_dates = []
     results = []
@@ -1165,9 +1189,9 @@ def collect_all_50_days(progress=False):
                 )
             finally:
                 completed += 1
-                if progress and completed in {10, 20, 30, 40, 50}:
+                if progress and completed in {10, 20, 30, 40, DAYS}:
                     print(
-                        f"⏳ 기준값 진행: {completed}/50 날짜 처리 완료"
+                        f"⏳ 기준값 진행: {completed}/{DAYS} 날짜 처리 완료"
                     )
 
     results.sort(
@@ -1199,7 +1223,7 @@ def collect_all_50_days(progress=False):
                     f"{item['date']}: " + " | ".join(item["logs"])
                 )
 
-    # 오류가 많아도 50개 날짜 로그를 전부 찍지 않는다.
+    # 오류가 많아도 날짜별 오류 로그를 전부 찍지 않는다.
     if error_examples:
         print(
             "⚠️ API 오류 예시(최대 3건): "
@@ -1430,18 +1454,20 @@ def process_booking_states(events, show_state):
 
 
 # ============================================================
-# Staggered 50-day scheduler
+# Staggered 43-day scheduler
 # GENERAL / DOLBY use the SAME interval for each date.
 # ============================================================
 
 def interval_for_offset(offset):
+    if offset <= 1:
+        return INTERVAL_0_1
     if offset <= 4:
-        return INTERVAL_0_4
+        return INTERVAL_2_4
     if offset <= 14:
         return INTERVAL_5_14
     if offset <= 30:
         return INTERVAL_15_30
-    return INTERVAL_31_49
+    return INTERVAL_31_42
 
 
 def sold_out_dates(show_state):
@@ -1462,7 +1488,7 @@ def effective_interval(date, offset, show_state):
 
 
 def build_due_schedule(show_state):
-    """Spread the 50 dates across each bucket instead of firing them together."""
+    """Spread the 43 dates across each bucket instead of firing them together."""
     now = time.monotonic()
     dates = make_dates()
     groups = {}
@@ -1605,12 +1631,12 @@ def main():
 
     print(
         "DATE RANGE: "
-        "TODAY ~ +49 DAYS (50 DAYS TOTAL)"
+        "TODAY ~ +42 DAYS (43 DAYS TOTAL)"
     )
 
     print(
         "SCAN MODE: "
-        "50 DAYS STAGGERED / GENERAL+DOLBY SAME INTERVAL / 2 WORKERS"
+        "43 DAYS STAGGERED / GENERAL+DOLBY SAME INTERVAL / 2 WORKERS"
     )
 
     print(
@@ -1620,13 +1646,16 @@ def main():
 
     print(
         "DATE INTERVALS: "
-        "0~4일 90s / 5~14일 30s / 15~30일 60s / 31~49일 300s"
+        "0~1일 20s / 2~4일 90s / 5~14일 30s / 15~30일 60s / 31~42일 300s"
     )
     print(
         "GENERAL / DOLBY: 같은 날짜는 같은 감시 주기"
     )
     print(
-        "SOLD OUT BOOST: 매진이 잡힌 날짜는 30s"
+        "SOLD OUT BOOST: 매진이 잡힌 날짜는 20s"
+    )
+    print(
+        "00/30 FAST SCAN: +4~+21일 18일 / 2 workers / 0.17s gap"
     )
 
     print(
@@ -1638,7 +1667,7 @@ def main():
         "'취소표가 나타났습니다'"
     )
     print(
-        "LOG MODE: 기준값 10/20/30/40/50 진행 + "
+        f"LOG MODE: 기준값 10/20/30/40/{DAYS} 진행 + "
         "정상 감시는 10분 요약 / 서버 과부하는 즉시 자동완화"
     )
 
@@ -1689,15 +1718,15 @@ def main():
     if not baseline_done():
         print()
         print("=" * 72)
-        print("INITIAL 50-DAY BASELINE")
+        print("INITIAL 43-DAY BASELINE")
         print("=" * 72)
         print(
-            "현재 50일 전체 메가토크(GV 포함) / 무대인사 / DOLBY와 "
+            "현재 43일 전체 메가토크(GV 포함) / 무대인사 / DOLBY와 "
             "공식 이벤트 선행 신호를 알림 없이 기준값으로 등록합니다."
         )
 
         events, failed_dates = (
-            collect_all_50_days(progress=True)
+            collect_all_days(progress=True)
         )
 
         if failed_dates:
@@ -1766,6 +1795,7 @@ def main():
     next_due = build_due_schedule(show_state)
     offsets = {date: i for i, date in enumerate(make_dates())}
     last_official_event_check = 0.0
+    next_safety_scan_at = next_halfhour_boundary(now_kst())
 
     date_count_cache = state_count_cache(show_state)
     latest_counts = total_counts_from_cache(date_count_cache)
@@ -1780,7 +1810,8 @@ def main():
 
     print(
         "✅ 분산 감시 시작 | GENERAL/DOLBY 동일 주기 | "
-        "0~4일 90초 / 5~14일 30초 / 15~30일 60초 / 31~49일 5분"
+        "오늘·내일 20초 / +2~+4일 90초 / +5~+14일 30초 / "
+        "+15~+30일 60초 / +31~+42일 5분"
     )
 
     while True:
@@ -1843,10 +1874,10 @@ def main():
             heartbeat_soldout += sold_out_count
             heartbeat_failed_dates += len(failed_dates)
 
-            # Reschedule each checked date. Sold-out dates automatically get 30s.
+            # Reschedule each checked date. Sold-out dates automatically get 20s.
             reschedule_base = time.monotonic()
             for date in due_dates:
-                offset = offsets.get(date, 49)
+                offset = offsets.get(date, DAYS - 1)
                 interval = effective_interval(date, offset, show_state)
                 # After an error, don't hammer the same date immediately.
                 if date in failed_dates:
@@ -1855,6 +1886,96 @@ def main():
 
             if not failed_dates and batch_overloads == 0:
                 note_clean_cycle()
+
+        # 매시 00분/30분: +4~+21일 18일을 2 workers + 0.17초로 빠르게 전체점검.
+        # 평소 분산감시와 동일한 상태/중복방지 로직을 사용한다.
+        now_wall = now_kst()
+        if now_wall >= next_safety_scan_at:
+            safety_slot = next_safety_scan_at
+            safety_dates = make_safety_scan_dates()
+            print(
+                f"🔎 {safety_slot.strftime('%H:%M')} 빠른 전체점검 시작 | "
+                f"+4~+21일 {len(safety_dates)}일 | 2 workers / 0.17s gap"
+            )
+            safety_started = time.monotonic()
+            overload_before = overload_event_count()
+            safety_events, safety_failed = collect_due_dates(safety_dates)
+            safety_overloads = overload_event_count() - overload_before
+
+            safety_valid_dates = set(safety_dates) - set(safety_failed)
+            safety_valid_events = {
+                key: event
+                for key, event in safety_events.items()
+                if event.get("date") in safety_valid_dates
+            }
+
+            if safety_overloads > 0:
+                print(
+                    "🛡️ 00/30 빠른점검 중 서버 과부하 감지 - "
+                    "부분 데이터는 폐기하고 기존 상태를 유지합니다."
+                )
+                safety_valid_events = {}
+                safety_valid_dates = set()
+
+            if safety_valid_dates:
+                safety_new, _safety_sent_keys = send_new_events(
+                    safety_valid_events, seen
+                )
+                safety_cancel, safety_soldout = process_booking_states(
+                    safety_valid_events, show_state
+                )
+
+                for date in safety_valid_dates:
+                    date_events = {
+                        k: e for k, e in safety_valid_events.items()
+                        if e.get("date") == date
+                    }
+                    date_count_cache[date] = count_events(date_events)
+                latest_counts = total_counts_from_cache(date_count_cache)
+
+                save_seen(seen)
+                save_status(status)
+            else:
+                safety_new = 0
+                safety_cancel = 0
+                safety_soldout = 0
+
+            heartbeat_date_checks += len(safety_dates)
+            heartbeat_new += safety_new
+            heartbeat_cancel += safety_cancel
+            heartbeat_soldout += safety_soldout
+            heartbeat_failed_dates += len(safety_failed)
+
+            # 방금 빠른점검한 날짜는 해당 날짜의 정상 주기만큼 다음 조회를 미룬다.
+            reschedule_base = time.monotonic()
+            for date in safety_dates:
+                offset = offsets.get(date)
+                if offset is None:
+                    continue
+                interval = effective_interval(date, offset, show_state)
+                if date in safety_failed:
+                    interval = max(interval, 60.0)
+                next_due[date] = reschedule_base + interval
+
+            safety_elapsed = time.monotonic() - safety_started
+            if not safety_failed and safety_overloads == 0:
+                print(
+                    f"✅ {safety_slot.strftime('%H:%M')} 빠른 전체점검 완료 | "
+                    f"18/18 성공 | {safety_elapsed:.2f}초 | "
+                    f"새 일정 {safety_new} | 매진변화 {safety_soldout} | "
+                    f"취소표 {safety_cancel}"
+                )
+                note_clean_cycle()
+            else:
+                print(
+                    f"⚠️ {safety_slot.strftime('%H:%M')} 빠른 전체점검 일부 실패 | "
+                    f"성공 {len(safety_valid_dates)}/18 | {safety_elapsed:.2f}초 | "
+                    f"실패날짜 {len(safety_failed)}"
+                )
+
+            # 실행이 조금 늦어졌더라도 지난 슬롯을 연속 재실행하지 않고 다음 30분 슬롯으로 이동.
+            while next_safety_scan_at <= now_kst():
+                next_safety_scan_at += timedelta(minutes=SAFETY_SCAN_EVERY_MINUTES)
 
         # Official event page is independent and intentionally light.
         now_mono = time.monotonic()
@@ -1900,7 +2021,11 @@ def main():
         next_date_due = min(next_due.values()) if next_due else now_mono + 1.0
         next_official_due = last_official_event_check + OFFICIAL_EVENT_CHECK_INTERVAL
         next_heartbeat_due = heartbeat_started + HEARTBEAT_INTERVAL
-        next_wake = min(next_date_due, next_official_due, next_heartbeat_due)
+        seconds_to_safety = max(0.0, (next_safety_scan_at - now_kst()).total_seconds())
+        next_safety_due = time.monotonic() + seconds_to_safety
+        next_wake = min(
+            next_date_due, next_official_due, next_heartbeat_due, next_safety_due
+        )
         sleep_for = max(0.05, min(1.0, next_wake - time.monotonic()))
         time.sleep(sleep_for)
 

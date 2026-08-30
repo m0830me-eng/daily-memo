@@ -22,11 +22,12 @@ from curl_cffi import requests
 # 코엑스 지점번호: 1351
 #
 # 최종 감시 방식:
-# - 한국시간 기준 오늘~49일 뒤 = 50일 전체
-# - 50일 전체를 한 사이클로 검사
-# - 2 workers 고정
-# - 모든 API 요청 시작 간격 최소 0.17초
-# - 한 사이클 종료 후 즉시 다음 50일 전체 스캔
+# - 한국시간 기준 오늘~49일 뒤 = 50일 전체 유지
+# - GENERAL / DOLBY 모두 같은 날짜 구간 주기로 분산 감시
+# - 오늘~+4일 90초 / +5~+14일 30초 / +15~+30일 60초 / +31~+49일 300초
+# - 매진이 잡힌 날짜는 30초 감시로 자동 승격
+# - 2 workers 고정, 모든 API 요청 시작 간격 최소 0.17초
+# - 서버 과부하 시 현재 요청 묶음 중단 + 60/120/300초 단계 휴식
 # ============================================================
 
 BRANCH_NO = "1351"
@@ -35,8 +36,8 @@ BRANCH_NAME = "메가박스 코엑스"
 DAYS = 50
 WORKERS = 2
 REQUEST_GAP = 0.17
-OVERLOAD_GAP_MAX = 0.35
-OVERLOAD_COOLDOWN_SECONDS = 30.0
+OVERLOAD_GAP_STEPS = (0.30, 0.40, 0.50)
+OVERLOAD_COOLDOWN_STEPS = (60.0, 120.0, 300.0)
 OVERLOAD_RECOVERY_CYCLES = 10
 RUN_SECONDS = int(os.environ.get("RUN_SECONDS", "120"))
 
@@ -51,8 +52,16 @@ STATE_FILE = "seen_megabox_coex.json"
 STATUS_FILE = "status_megabox_coex.json"
 BASELINE_FILE = "baseline_megabox_coex.done"
 EVENT_PAGE_URL = "https://www.megabox.co.kr/event"
-OFFICIAL_EVENT_CHECK_INTERVAL = 30.0
+OFFICIAL_EVENT_CHECK_INTERVAL = 120.0
 HEARTBEAT_INTERVAL = 600.0  # 10분마다 Actions 요약 로그
+
+# GENERAL / DOLBY 공통 날짜별 감시 주기
+INTERVAL_0_4 = 90.0
+INTERVAL_5_14 = 30.0
+INTERVAL_15_30 = 60.0
+INTERVAL_31_49 = 300.0
+SOLD_OUT_DATE_INTERVAL = 30.0
+MAX_DUE_DATES_PER_BATCH = 2
 
 # 기존 14일 baseline을 자동으로 무효화해서
 # 업그레이드 첫 실행 때 50일 전체를 조용히 새 기준값으로 등록한다.
@@ -91,7 +100,9 @@ _adaptive_lock = threading.Lock()
 _active_request_gap = REQUEST_GAP
 _overload_until = 0.0
 _overload_events = 0
+_overload_level = 0
 _clean_cycle_streak = 0
+_cycle_abort_event = threading.Event()
 
 
 # ============================================================
@@ -346,49 +357,70 @@ def overload_event_count():
         return _overload_events
 
 
+def cycle_aborted():
+    return _cycle_abort_event.is_set()
+
+
+def reset_cycle_abort():
+    _cycle_abort_event.clear()
+
+
 def register_overload(reason):
-    global _active_request_gap, _overload_until, _overload_events, _clean_cycle_streak
+    global _active_request_gap, _overload_until, _overload_events
+    global _overload_level, _clean_cycle_streak
 
     now = time.monotonic()
     should_log = False
+    cooldown = 0.0
+
+    # 과부하 한 번이면 현재 날짜 조회 묶음을 즉시 중단한다.
+    # 남은 요청을 계속 두드리지 않고 다음 재시도까지 쉬는 방식.
+    _cycle_abort_event.set()
 
     with _adaptive_lock:
         _overload_events += 1
         _clean_cycle_streak = 0
 
-        # 같은 과부하 파동에서 두 worker가 동시에 실패해도
-        # 간격을 여러 번 올리거나 로그를 도배하지 않는다.
+        # 같은 과부하 파동에서 두 worker가 거의 동시에 실패해도
+        # 단계/로그는 한 번만 올린다.
         if now >= _overload_until:
-            _active_request_gap = min(
-                OVERLOAD_GAP_MAX,
-                max(0.22, _active_request_gap + 0.03),
+            _overload_level = min(
+                len(OVERLOAD_GAP_STEPS),
+                _overload_level + 1,
             )
-            _overload_until = now + OVERLOAD_COOLDOWN_SECONDS
+            index = _overload_level - 1
+            _active_request_gap = OVERLOAD_GAP_STEPS[index]
+            cooldown = OVERLOAD_COOLDOWN_STEPS[index]
+            _overload_until = now + cooldown
             should_log = True
 
     if should_log:
         print(
             "⚠️ 메가박스 서버 과부하 감지 -> "
-            f"{OVERLOAD_COOLDOWN_SECONDS:.0f}초 자동 휴식 / "
-            f"요청간격 {current_request_gap():.2f}s로 완화 | "
+            f"현재 조회 묶음 즉시 중단 / "
+            f"{cooldown:.0f}초 휴식 / "
+            f"재시도 간격 {current_request_gap():.2f}s | "
             f"원인: {reason}"
         )
 
 
 def note_clean_cycle():
-    global _active_request_gap, _clean_cycle_streak
+    global _active_request_gap, _clean_cycle_streak, _overload_level
 
     changed = None
     with _adaptive_lock:
         _clean_cycle_streak += 1
         if (
             _clean_cycle_streak >= OVERLOAD_RECOVERY_CYCLES
-            and _active_request_gap > REQUEST_GAP
+            and _overload_level > 0
         ):
-            _active_request_gap = max(
-                REQUEST_GAP,
-                round(_active_request_gap - 0.01, 2),
-            )
+            _overload_level -= 1
+            if _overload_level == 0:
+                _active_request_gap = REQUEST_GAP
+            else:
+                _active_request_gap = OVERLOAD_GAP_STEPS[
+                    _overload_level - 1
+                ]
             _clean_cycle_streak = 0
             changed = _active_request_gap
 
@@ -403,6 +435,9 @@ def wait_rate_slot():
     global _next_request_time
 
     while True:
+        if cycle_aborted():
+            return False
+
         with _adaptive_lock:
             overload_until = _overload_until
             gap = _active_request_gap
@@ -412,10 +447,10 @@ def wait_rate_slot():
             target = max(_next_request_time, overload_until)
 
             if now < target:
-                sleep_for = target - now
+                sleep_for = min(target - now, 0.25)
             else:
                 _next_request_time = now + gap
-                return
+                return True
 
         time.sleep(sleep_for)
 
@@ -474,7 +509,12 @@ def request_schedule(
     last_error = ""
 
     for attempt in range(1, 3):
-        wait_rate_slot()
+        if cycle_aborted():
+            return None, True, f"{label} {date} CYCLE ABORTED"
+
+        if not wait_rate_slot():
+            return None, True, f"{label} {date} CYCLE ABORTED"
+
         started = time.monotonic()
         session = get_session()
 
@@ -507,10 +547,6 @@ def request_schedule(
             )
             register_overload(f"HTTP {response.status_code}")
             reset_thread_session()
-
-            if attempt < 2:
-                continue
-
             return None, True, last_error
 
         if response.status_code != 200:
@@ -532,10 +568,6 @@ def request_schedule(
             )
             register_overload("Workload is so high")
             reset_thread_session()
-
-            if attempt < 2:
-                continue
-
             return None, True, last_error
 
         try:
@@ -569,12 +601,6 @@ def request_schedule(
 
             register_overload("HTTP 200 비정상 JSON")
             reset_thread_session()
-
-            # HTTP 200이어도 비정상/빈 응답이면 한 번 새 세션으로 재시도.
-            # 과부하 보호가 전역 휴식/간격 완화를 담당한다.
-            if attempt < 2:
-                continue
-
             return None, True, last_error
 
     return None, True, (
@@ -1004,7 +1030,7 @@ def process_official_signals(signals, official_state):
 
 
 # ============================================================
-# Collect - 50 days / 2 workers / fixed 0.17s request gap
+# Collect - 50 days / 2 workers / adaptive overload protection
 # ============================================================
 
 def collect_date(
@@ -1023,6 +1049,15 @@ def collect_date(
     )
     logs.append(general_log)
     problem = problem or general_problem
+
+    if cycle_aborted():
+        return {
+            "index": index,
+            "date": date,
+            "events": events,
+            "problem": True,
+            "logs": logs,
+        }
 
     if general_rows is None:
         general_rows = []
@@ -1099,6 +1134,7 @@ def collect_all_50_days(progress=False):
     results = []
     dates = make_dates()
 
+    reset_cycle_abort()
     reset_rate_clock()
 
     with ThreadPoolExecutor(
@@ -1394,6 +1430,129 @@ def process_booking_states(events, show_state):
 
 
 # ============================================================
+# Staggered 50-day scheduler
+# GENERAL / DOLBY use the SAME interval for each date.
+# ============================================================
+
+def interval_for_offset(offset):
+    if offset <= 4:
+        return INTERVAL_0_4
+    if offset <= 14:
+        return INTERVAL_5_14
+    if offset <= 30:
+        return INTERVAL_15_30
+    return INTERVAL_31_49
+
+
+def sold_out_dates(show_state):
+    dates = set()
+    for record in show_state.values():
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") == "SOLD_OUT" and record.get("date"):
+            dates.add(record["date"])
+    return dates
+
+
+def effective_interval(date, offset, show_state):
+    base = interval_for_offset(offset)
+    if date in sold_out_dates(show_state):
+        return min(base, SOLD_OUT_DATE_INTERVAL)
+    return base
+
+
+def build_due_schedule(show_state):
+    """Spread the 50 dates across each bucket instead of firing them together."""
+    now = time.monotonic()
+    dates = make_dates()
+    groups = {}
+    for offset, date in enumerate(dates):
+        interval = effective_interval(date, offset, show_state)
+        groups.setdefault(interval, []).append((offset, date))
+
+    next_due = {}
+    for interval, items in groups.items():
+        count = max(1, len(items))
+        # Each bucket is evenly spread over its own interval.
+        for pos, (_offset, date) in enumerate(items):
+            next_due[date] = now + (interval * pos / count)
+    return next_due
+
+
+def collect_due_dates(dates):
+    """Fetch only the dates that are due now; each date checks GENERAL + DOLBY."""
+    if not dates:
+        return {}, []
+
+    all_events = {}
+    failed_dates = []
+    results = []
+
+    reset_cycle_abort()
+    reset_rate_clock()
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as executor:
+        futures = []
+        full_dates = make_dates()
+        index_map = {d: i + 1 for i, d in enumerate(full_dates)}
+        for date in dates:
+            futures.append(
+                executor.submit(collect_date, index_map.get(date, 0), date)
+            )
+
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as e:
+                print("DATE FUTURE ERROR:", repr(e))
+
+    error_examples = []
+    for item in results:
+        if item.get("problem"):
+            failed_dates.append(item.get("date", ""))
+            if len(error_examples) < 2:
+                error_examples.append(
+                    f"{item.get('date','')}: " + " | ".join(item.get("logs", []))
+                )
+            continue
+        all_events.update(item.get("events", {}))
+
+    returned_dates = {item.get("date") for item in results}
+    for date in dates:
+        if date not in returned_dates:
+            failed_dates.append(date)
+
+    failed_dates = sorted(set(d for d in failed_dates if d))
+    if error_examples:
+        print("⚠️ API 오류 예시(최대 2건): " + " || ".join(error_examples))
+
+    return all_events, failed_dates
+
+
+def state_count_cache(show_state):
+    """Starting count cache for heartbeat only; detection does not depend on it."""
+    valid_dates = set(make_dates())
+    cache = {}
+    for record in show_state.values():
+        if not isinstance(record, dict):
+            continue
+        date = record.get("date")
+        kind = record.get("type")
+        if date not in valid_dates or kind not in {"메가토크", "무대인사", "DOLBY"}:
+            continue
+        bucket = cache.setdefault(date, {"메가토크": 0, "무대인사": 0, "DOLBY": 0})
+        bucket[kind] += 1
+    return cache
+
+
+def total_counts_from_cache(cache):
+    total = {"메가토크": 0, "무대인사": 0, "DOLBY": 0}
+    for counts in cache.values():
+        for key in total:
+            total[key] += counts.get(key, 0)
+    return total
+
+# ============================================================
 # Diagnostics
 # ============================================================
 
@@ -1451,7 +1610,7 @@ def main():
 
     print(
         "SCAN MODE: "
-        "50 DAYS FULL SCAN / 2 WORKERS"
+        "50 DAYS STAGGERED / GENERAL+DOLBY SAME INTERVAL / 2 WORKERS"
     )
 
     print(
@@ -1460,8 +1619,14 @@ def main():
     )
 
     print(
-        "NEXT CYCLE: "
-        "IMMEDIATELY AFTER EACH 50-DAY SCAN"
+        "DATE INTERVALS: "
+        "0~4일 90s / 5~14일 30s / 15~30일 60s / 31~49일 300s"
+    )
+    print(
+        "GENERAL / DOLBY: 같은 날짜는 같은 감시 주기"
+    )
+    print(
+        "SOLD OUT BOOST: 매진이 잡힌 날짜는 30s"
     )
 
     print(
@@ -1596,81 +1761,115 @@ def main():
     status = load_status()
     show_state = status["shows"]
     official_state = status["official_events"]
+
     monitor_started = time.monotonic()
-    cycle_number = 0
+    next_due = build_due_schedule(show_state)
+    offsets = {date: i for i, date in enumerate(make_dates())}
     last_official_event_check = 0.0
 
+    date_count_cache = state_count_cache(show_state)
+    latest_counts = total_counts_from_cache(date_count_cache)
+
     heartbeat_started = monitor_started
-    heartbeat_cycles = 0
+    heartbeat_date_checks = 0
     heartbeat_new = 0
     heartbeat_cancel = 0
     heartbeat_soldout = 0
     heartbeat_official = 0
     heartbeat_failed_dates = 0
-    latest_counts = {"메가토크": 0, "무대인사": 0, "DOLBY": 0}
+
+    print(
+        "✅ 분산 감시 시작 | GENERAL/DOLBY 동일 주기 | "
+        "0~4일 90초 / 5~14일 30초 / 15~30일 60초 / 31~49일 5분"
+    )
 
     while True:
-        total_elapsed = (
-            time.monotonic()
-            - monitor_started
-        )
-
-        if total_elapsed >= RUN_SECONDS:
+        now_mono = time.monotonic()
+        if now_mono - monitor_started >= RUN_SECONDS:
             print("MONITOR TIME FINISHED")
             break
 
-        cycle_number += 1
-        overload_before = overload_event_count()
+        # Due dates are sorted so old overdue dates are handled first.
+        due_dates = [
+            date for date, due in sorted(next_due.items(), key=lambda x: x[1])
+            if due <= now_mono
+        ][:MAX_DUE_DATES_PER_BATCH]
 
-        events, failed_dates = collect_all_50_days()
-        cycle_overloads = overload_event_count() - overload_before
+        if due_dates:
+            overload_before = overload_event_count()
+            events, failed_dates = collect_due_dates(due_dates)
+            batch_overloads = overload_event_count() - overload_before
 
-        # 완전 정상 사이클일 때만 현재 개수를 최신값으로 교체한다.
-        # 서버 과부하로 50일이 비어도 메가토크/무대인사/DOLBY가 0으로 보이지 않게 한다.
-        if not failed_dates:
-            latest_counts = count_events(events)
-            if cycle_overloads == 0:
+            valid_dates = set(due_dates) - set(failed_dates)
+            valid_events = {
+                key: event
+                for key, event in events.items()
+                if event.get("date") in valid_dates
+            }
+
+            # Failed/overload dates never mutate the existing state.
+            if batch_overloads > 0:
+                print(
+                    "🛡️ 과부하가 발생한 조회 묶음의 부분 데이터는 폐기하고 "
+                    "기존 상태를 그대로 유지합니다."
+                )
+                valid_events = {}
+
+            if valid_events or valid_dates:
+                new_count, _sent_keys = send_new_events(valid_events, seen)
+                cancel_count, sold_out_count = process_booking_states(
+                    valid_events, show_state
+                )
+
+                # Heartbeat counts: replace only successfully fetched dates.
+                for date in valid_dates:
+                    date_events = {
+                        k: e for k, e in valid_events.items()
+                        if e.get("date") == date
+                    }
+                    date_count_cache[date] = count_events(date_events)
+                latest_counts = total_counts_from_cache(date_count_cache)
+
+                save_seen(seen)
+                save_status(status)
+            else:
+                new_count = 0
+                cancel_count = 0
+                sold_out_count = 0
+
+            heartbeat_date_checks += len(due_dates)
+            heartbeat_new += new_count
+            heartbeat_cancel += cancel_count
+            heartbeat_soldout += sold_out_count
+            heartbeat_failed_dates += len(failed_dates)
+
+            # Reschedule each checked date. Sold-out dates automatically get 30s.
+            reschedule_base = time.monotonic()
+            for date in due_dates:
+                offset = offsets.get(date, 49)
+                interval = effective_interval(date, offset, show_state)
+                # After an error, don't hammer the same date immediately.
+                if date in failed_dates:
+                    interval = max(interval, 60.0)
+                next_due[date] = reschedule_base + interval
+
+            if not failed_dates and batch_overloads == 0:
                 note_clean_cycle()
 
-        if failed_dates:
-            print(
-                f"⚠️ 이번 사이클 API 실패: {len(failed_dates)}/50 날짜 | "
-                f"현재 요청간격 {current_request_gap():.2f}s"
-            )
-
-        new_count, _sent_keys = send_new_events(
-            events,
-            seen,
-        )
-
-        cancel_count, sold_out_count = process_booking_states(
-            events,
-            show_state,
-        )
-
-        official_count = 0
+        # Official event page is independent and intentionally light.
         now_mono = time.monotonic()
-        if (
-            now_mono - last_official_event_check
-            >= OFFICIAL_EVENT_CHECK_INTERVAL
-        ):
+        official_count = 0
+        if now_mono - last_official_event_check >= OFFICIAL_EVENT_CHECK_INTERVAL:
             official_signals = fetch_official_event_signals()
             official_count = process_official_signals(
-                official_signals,
-                official_state,
+                official_signals, official_state
             )
+            heartbeat_official += official_count
+            if official_count:
+                save_status(status)
             last_official_event_check = now_mono
 
-        save_seen(seen)
-        save_status(status)
-
-        heartbeat_cycles += 1
-        heartbeat_new += new_count
-        heartbeat_cancel += cancel_count
-        heartbeat_soldout += sold_out_count
-        heartbeat_official += official_count
-        heartbeat_failed_dates += len(failed_dates)
-
+        # 10-minute compact heartbeat.
         now_mono = time.monotonic()
         if now_mono - heartbeat_started >= HEARTBEAT_INTERVAL:
             mins = int((now_mono - heartbeat_started) // 60)
@@ -1680,27 +1879,30 @@ def main():
                 else "⚠️ 감시중(일부 API 오류)"
             )
             print(
-                f"{health} | "
-                f"최근 {mins}분 {heartbeat_cycles}사이클 완료 | "
-                f"누적 CYCLE #{cycle_number} | "
+                f"{health} | 최근 {mins}분 날짜조회 {heartbeat_date_checks}건 | "
                 f"메가토크 {latest_counts['메가토크']} | "
                 f"무대인사 {latest_counts['무대인사']} | "
                 f"DOLBY {latest_counts['DOLBY']} | "
-                f"새 일정 {heartbeat_new} | "
-                f"매진변화 {heartbeat_soldout} | "
-                f"취소표 {heartbeat_cancel} | "
-                f"공식선행 {heartbeat_official} | "
+                f"새 일정 {heartbeat_new} | 매진변화 {heartbeat_soldout} | "
+                f"취소표 {heartbeat_cancel} | 공식선행 {heartbeat_official} | "
                 f"API실패 {heartbeat_failed_dates}건 | "
-                f"현재간격 {current_request_gap():.2f}s"
+                f"현재 요청간격 {current_request_gap():.2f}s"
             )
-
             heartbeat_started = now_mono
-            heartbeat_cycles = 0
+            heartbeat_date_checks = 0
             heartbeat_new = 0
             heartbeat_cancel = 0
             heartbeat_soldout = 0
             heartbeat_official = 0
             heartbeat_failed_dates = 0
+
+        # Sleep only until the next thing is due, capped so cancellation is responsive.
+        next_date_due = min(next_due.values()) if next_due else now_mono + 1.0
+        next_official_due = last_official_event_check + OFFICIAL_EVENT_CHECK_INTERVAL
+        next_heartbeat_due = heartbeat_started + HEARTBEAT_INTERVAL
+        next_wake = min(next_date_due, next_official_due, next_heartbeat_due)
+        sleep_for = max(0.05, min(1.0, next_wake - time.monotonic()))
+        time.sleep(sleep_for)
 
     save_seen(seen)
     save_status(status)

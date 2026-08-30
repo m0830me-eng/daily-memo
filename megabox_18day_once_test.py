@@ -18,6 +18,9 @@ HEADERS = {
 }
 OVERLOAD_TEXT = 'workload is so high'
 ABORT = threading.Event()
+REQUEST_GAP = 0.17
+_rate_lock = threading.Lock()
+_next_request_time = 0.0
 
 def now_kst():
     return datetime.now(KST)
@@ -64,11 +67,21 @@ def extract_rows(data):
                 return rows
     return []
 
+def wait_rate_slot():
+    global _next_request_time
+    with _rate_lock:
+        now = time.monotonic()
+        if now < _next_request_time:
+            time.sleep(_next_request_time - now)
+            now = time.monotonic()
+        _next_request_time = now + REQUEST_GAP
+
 def one_call(session, date, special):
     label = 'DOLBY' if special else 'GENERAL'
     if ABORT.is_set():
         return {'label': label, 'ok': False, 'skipped': True, 'detail': 'aborted after overload'}
 
+    wait_rate_slot()
     started = time.monotonic()
     try:
         r = session.post(
@@ -132,11 +145,12 @@ def test_date(date):
 def main():
     dates = dates_plus_4_to_21()
     print('=' * 72)
-    print('MEGABOX +4~+21 DAYS / 18-DATE TRUE CONCURRENT ONE-SHOT TEST')
+    print('MEGABOX +4~+21 DAYS / 2-WORKER ONE-SHOT TEST')
     print('=' * 72)
     print('DATES:', dates[0], '~', dates[-1], f'({len(dates)} dates)')
-    print('WORKERS: 18 date workers')
+    print('WORKERS: 2 date workers')
     print('EACH WORKER: GENERAL -> DOLBY sequentially')
+    print(f'GLOBAL REQUEST START GAP: {REQUEST_GAP:.2f}s')
     print('REPEAT: NO (one shot only)')
     print('DISCORD/STATE WRITE: NO')
     print('OVERLOAD GUARD: 429 / Workload is so high -> stop extra calls')
@@ -145,7 +159,7 @@ def main():
 
     started = time.monotonic()
     results = []
-    with ThreadPoolExecutor(max_workers=18) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(test_date, d) for d in dates]
         for f in as_completed(futures):
             results.append(f.result())
@@ -172,10 +186,10 @@ def main():
     print('=' * 72)
     if ok_dates == 18:
         print(f'✅ TEST RESULT: ALL 18 DATES SUCCESS | {elapsed:.2f}s')
-        print('판정: +4~+21일 18개 날짜 동시 작업을 1회 수행해도 이번 테스트에서는 제한이 발생하지 않았습니다.')
+        print('판정: +4~+21일을 2 workers + 0.17초 요청간격으로 1회 빠르게 훑는 테스트가 성공했습니다.')
     elif overload:
         print(f'❌ TEST RESULT: SERVER LIMIT / OVERLOAD DETECTED | success={ok_dates}/18 | {elapsed:.2f}s')
-        print('판정: 18개 날짜 완전 동시는 00/30 정식 적용에 사용하지 않는 것이 안전합니다.')
+        print('판정: 2 workers에서도 서버 제한이 발생했습니다. 00/30 정식 적용 전 더 낮은 동시성/간격이 필요합니다.')
     else:
         print(f'⚠️ TEST RESULT: PARTIAL FAILURE | success={ok_dates}/18 | {elapsed:.2f}s')
         print('FAILED DATES:', ', '.join(failed))

@@ -2,6 +2,8 @@ import os
 import json
 import time
 import html
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -17,17 +19,20 @@ from curl_cffi import requests
 #
 # 코엑스 지점번호: 1351
 #
-# 핵심 동작:
-# - 한국시간 기준 오늘~13일 뒤 = 14일 전체
-# - 14일 전체를 한 사이클로 검사
-# - 사이클 시작 기준 10초마다 다시 14일 전체 검사
+# 최종 감시 방식:
+# - 한국시간 기준 오늘~49일 뒤 = 50일 전체
+# - 50일 전체를 한 사이클로 검사
+# - 2 workers 고정
+# - 모든 API 요청 시작 간격 최소 0.17초
+# - 한 사이클 종료 후 즉시 다음 50일 전체 스캔
 # ============================================================
 
 BRANCH_NO = "1351"
 BRANCH_NAME = "메가박스 코엑스"
 
-DAYS = 14
-CHECK_INTERVAL = 10
+DAYS = 50
+WORKERS = 2
+REQUEST_GAP = 0.17
 RUN_SECONDS = int(os.environ.get("RUN_SECONDS", "120"))
 
 KST = ZoneInfo("Asia/Seoul")
@@ -40,12 +45,19 @@ SCHEDULE_API = (
 STATE_FILE = "seen_megabox_coex.json"
 BASELINE_FILE = "baseline_megabox_coex.done"
 
+# 기존 14일 baseline을 자동으로 무효화해서
+# 업그레이드 첫 실행 때 50일 전체를 조용히 새 기준값으로 등록한다.
+BASELINE_SCHEMA = "MEGABOX_COEX_50DAYS_2WORKERS_GAP017_V1"
+
 DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_MEGABOX_COEX",
     "",
 ).strip()
 
-DISCORD_USER_ID = os.environ.get("DISCORD_USER_ID", "").strip()
+DISCORD_USER_ID = os.environ.get(
+    "DISCORD_USER_ID",
+    "",
+).strip()
 
 HEADERS = {
     "Accept": "application/json, text/plain, */*",
@@ -55,8 +67,17 @@ HEADERS = {
         "https://www.megabox.co.kr/"
         "theater/time?brchNo=1351"
     ),
+    "Origin": "https://www.megabox.co.kr",
     "X-Requested-With": "XMLHttpRequest",
 }
+
+BLOCK_STATUSES = {
+    403, 429, 500, 502, 503, 504,
+}
+
+_thread_local = threading.local()
+_rate_lock = threading.Lock()
+_next_request_time = 0.0
 
 
 # ============================================================
@@ -99,16 +120,20 @@ def send_discord(message):
         print("WEBHOOK MISSING")
         return False
 
+    payload = {
+        "content": message,
+        "flags": 4,  # Discord 링크 미리보기(Embed) 숨김
+    }
+
+    if DISCORD_USER_ID:
+        payload["allowed_mentions"] = {
+            "users": [DISCORD_USER_ID]
+        }
+
     try:
         response = requests.post(
             DISCORD_WEBHOOK,
-            json={
-                "content": message,
-                "flags": 4,  # Discord 링크 미리보기(Embed) 숨김
-                "allowed_mentions": {
-                    "users": [DISCORD_USER_ID]
-                },
-            },
+            json=payload,
             impersonate="chrome",
             timeout=15,
         )
@@ -183,7 +208,21 @@ def save_seen(seen):
 
 
 def baseline_done():
-    return os.path.exists(BASELINE_FILE)
+    if not os.path.exists(BASELINE_FILE):
+        return False
+
+    try:
+        with open(
+            BASELINE_FILE,
+            "r",
+            encoding="utf-8",
+        ) as f:
+            value = f.read().strip()
+
+        return value == BASELINE_SCHEMA
+
+    except Exception:
+        return False
 
 
 def mark_baseline_done():
@@ -192,29 +231,60 @@ def mark_baseline_done():
         "w",
         encoding="utf-8",
     ) as f:
-        f.write(now_kst().isoformat())
+        f.write(BASELINE_SCHEMA)
 
     print("BASELINE MARKER CREATED")
 
 
 # ============================================================
-# API helpers
+# API / rate helpers
 # ============================================================
 
-def parse_json_response(response):
-    try:
-        return response.json()
+def get_session():
+    session = getattr(
+        _thread_local,
+        "session",
+        None,
+    )
 
-    except Exception as e:
-        print(
-            "JSON ERROR:",
-            repr(e),
+    if session is None:
+        session = requests.Session(
+            impersonate="chrome"
         )
-        print(
-            "RESPONSE PREVIEW:",
-            response.text[:300],
+        _thread_local.session = session
+
+    return session
+
+
+def reset_thread_session():
+    try:
+        _thread_local.session = None
+    except Exception:
+        pass
+
+
+def reset_rate_clock():
+    global _next_request_time
+
+    with _rate_lock:
+        _next_request_time = time.monotonic()
+
+
+def wait_rate_slot():
+    global _next_request_time
+
+    with _rate_lock:
+        now = time.monotonic()
+
+        if now < _next_request_time:
+            time.sleep(
+                _next_request_time - now
+            )
+            now = time.monotonic()
+
+        _next_request_time = (
+            now + REQUEST_GAP
         )
-        return {}
 
 
 def extract_movie_form_list(data):
@@ -237,7 +307,6 @@ def extract_movie_form_list(data):
 
 
 def request_schedule(
-    session,
     date,
     special=False,
 ):
@@ -269,8 +338,12 @@ def request_schedule(
         }
         label = "GENERAL"
 
+    last_error = ""
+
     for attempt in range(1, 3):
+        wait_rate_slot()
         started = time.monotonic()
+        session = get_session()
 
         try:
             response = session.post(
@@ -281,53 +354,79 @@ def request_schedule(
             )
 
         except Exception as e:
-            print(
-                f"{label} API {date} "
-                f"ATTEMPT={attempt} ERROR:",
-                repr(e),
+            last_error = (
+                f"{label} {date} ERROR {repr(e)}"
             )
+            reset_thread_session()
 
             if attempt < 2:
                 time.sleep(0.5)
                 continue
 
-            return None
+            return None, True, last_error
 
         elapsed = time.monotonic() - started
 
-        print(
-            f"{label} API {date} "
-            f"STATUS={response.status_code} "
-            f"TIME={elapsed:.2f}s "
-            f"SIZE={len(response.content):,} bytes"
-        )
-
-        if response.status_code in (
-            403, 429, 500, 502, 503, 504,
-        ):
-            print(
-                f"{label} API TEMPORARY ERROR "
-                f"{response.status_code}"
+        if response.status_code in BLOCK_STATUSES:
+            last_error = (
+                f"{label} {date} "
+                f"HTTP={response.status_code}"
             )
+            reset_thread_session()
 
             if attempt < 2:
                 time.sleep(0.5)
                 continue
 
-            return None
+            return None, True, last_error
 
         if response.status_code != 200:
-            print(
-                f"{label} API UNEXPECTED STATUS "
-                f"{response.status_code}"
+            return None, True, (
+                f"{label} {date} "
+                f"HTTP={response.status_code}"
             )
-            return None
 
-        data = parse_json_response(response)
+        try:
+            data = response.json()
+            rows = extract_movie_form_list(data)
 
-        return extract_movie_form_list(data)
+            retry_text = (
+                f" ATTEMPT={attempt}"
+                if attempt > 1
+                else ""
+            )
 
-    return None
+            return rows, False, (
+                f"{label} {date} "
+                f"HTTP=200 {elapsed:.2f}s "
+                f"ROWS={len(rows)}"
+                f"{retry_text}"
+            )
+
+        except Exception as e:
+            preview = (
+                response.text[:120]
+                .replace("\n", " ")
+                .replace("\r", " ")
+            )
+
+            last_error = (
+                f"{label} {date} JSON ERROR "
+                f"{repr(e)} PREVIEW={preview!r}"
+            )
+
+            reset_thread_session()
+
+            # HTTP 200이어도 비정상/빈 응답이면 한 번 새 세션으로 재시도.
+            if attempt < 2:
+                time.sleep(0.5)
+                continue
+
+            return None, True, last_error
+
+    return None, True, (
+        f"{label} {date} UNKNOWN ERROR"
+    )
 
 
 # ============================================================
@@ -526,131 +625,164 @@ def normalize_event(
 
 
 # ============================================================
-# Collect
+# Collect - 50 days / 2 workers / fixed 0.17s request gap
 # ============================================================
 
 def collect_date(
-    session,
+    index,
     date,
 ):
     events = {}
+    problem = False
+    logs = []
 
-    general_rows = request_schedule(
-        session,
-        date,
-        special=False,
+    general_rows, general_problem, general_log = (
+        request_schedule(
+            date,
+            special=False,
+        )
     )
+    logs.append(general_log)
+    problem = problem or general_problem
 
     if general_rows is None:
-        print(
-            "GENERAL COLLECTION FAILED:",
-            date,
-        )
-    else:
-        print(
-            "GENERAL ROW COUNT:",
-            len(general_rows),
+        general_rows = []
+
+    for row in general_rows:
+        event_type = get_target_type(
+            row,
+            from_dolby=False,
         )
 
-        for row in general_rows:
-            event_type = get_target_type(
-                row,
-                from_dolby=False,
-            )
-
-            if event_type not in (
-                "메가토크",
-                "무대인사",
-            ):
-                continue
-
-            key = event_key(
-                date,
-                row,
-                event_type,
-            )
-
-            events[key] = normalize_event(
-                date,
-                row,
-                event_type,
-            )
-
-    dolby_rows = request_schedule(
-        session,
-        date,
-        special=True,
-    )
-
-    if dolby_rows is None:
-        print(
-            "DOLBY COLLECTION FAILED:",
-            date,
-        )
-    else:
-        print(
-            "DOLBY ROW COUNT:",
-            len(dolby_rows),
-        )
-
-        for row in dolby_rows:
-            event_type = get_target_type(
-                row,
-                from_dolby=True,
-            )
-
-            if event_type is None:
-                continue
-
-            key = event_key(
-                date,
-                row,
-                event_type,
-            )
-
-            events[key] = normalize_event(
-                date,
-                row,
-                event_type,
-            )
-
-    if (
-        general_rows is None
-        and dolby_rows is None
-    ):
-        return None
-
-    return events
-
-
-def collect_all_14_days(
-    session,
-):
-    all_events = {}
-    failed_dates = []
-
-    dates = make_dates()
-
-    for index, date in enumerate(
-        dates,
-        start=1,
-    ):
-        print()
-        print(
-            f"--- DATE {index}/{len(dates)} "
-            f"{date} ---"
-        )
-
-        events = collect_date(
-            session,
-            date,
-        )
-
-        if events is None:
-            failed_dates.append(date)
+        if event_type not in (
+            "메가토크",
+            "무대인사",
+        ):
             continue
 
-        all_events.update(events)
+        key = event_key(
+            date,
+            row,
+            event_type,
+        )
+
+        events[key] = normalize_event(
+            date,
+            row,
+            event_type,
+        )
+
+    dolby_rows, dolby_problem, dolby_log = (
+        request_schedule(
+            date,
+            special=True,
+        )
+    )
+    logs.append(dolby_log)
+    problem = problem or dolby_problem
+
+    if dolby_rows is None:
+        dolby_rows = []
+
+    for row in dolby_rows:
+        event_type = get_target_type(
+            row,
+            from_dolby=True,
+        )
+
+        if event_type is None:
+            continue
+
+        key = event_key(
+            date,
+            row,
+            event_type,
+        )
+
+        events[key] = normalize_event(
+            date,
+            row,
+            event_type,
+        )
+
+    return {
+        "index": index,
+        "date": date,
+        "events": events,
+        "problem": problem,
+        "logs": logs,
+    }
+
+
+def collect_all_50_days():
+    all_events = {}
+    failed_dates = []
+    results = []
+    dates = make_dates()
+
+    reset_rate_clock()
+
+    with ThreadPoolExecutor(
+        max_workers=WORKERS
+    ) as executor:
+        futures = [
+            executor.submit(
+                collect_date,
+                index,
+                date,
+            )
+            for index, date in enumerate(
+                dates,
+                start=1,
+            )
+        ]
+
+        for future in as_completed(futures):
+            try:
+                results.append(
+                    future.result()
+                )
+            except Exception as e:
+                print(
+                    "DATE FUTURE ERROR:",
+                    repr(e),
+                )
+
+    results.sort(
+        key=lambda item: item["index"]
+    )
+
+    returned_dates = {
+        item["date"]
+        for item in results
+    }
+
+    for date in dates:
+        if date not in returned_dates:
+            failed_dates.append(date)
+
+    for item in results:
+        print(
+            f"--- DATE {item['index']}/50 "
+            f"{item['date']} ---"
+        )
+
+        for line in item["logs"]:
+            print(line)
+
+        all_events.update(
+            item["events"]
+        )
+
+        if item["problem"]:
+            failed_dates.append(
+                item["date"]
+            )
+
+    # 중복 실패 날짜 제거 + 날짜순 정렬
+    failed_dates = sorted(
+        set(failed_dates)
+    )
 
     return all_events, failed_dates
 
@@ -713,13 +845,19 @@ def send_new_events(
                 "메가토크 새 상영 일정"
             )
 
-        lines = [
-            f"<@{DISCORD_USER_ID}>",
-            "",
+        lines = []
+
+        if DISCORD_USER_ID:
+            lines.append(
+                f"<@{DISCORD_USER_ID}>"
+            )
+            lines.append("")
+
+        lines.extend([
             f"**{title}**",
             "",
             f"📅 **{pretty_date(date)}**",
-        ]
+        ])
 
         items.sort(
             key=lambda x: (
@@ -817,9 +955,9 @@ def print_counts(events):
 # ============================================================
 
 def main():
-    print("=" * 60)
+    print("=" * 72)
     print("MEGABOX COEX MONITOR")
-    print("=" * 60)
+    print("=" * 72)
 
     print(
         "BRANCH:",
@@ -838,18 +976,22 @@ def main():
 
     print(
         "DATE RANGE: "
-        "TODAY ~ +13 DAYS (14 DAYS TOTAL)"
+        "TODAY ~ +49 DAYS (50 DAYS TOTAL)"
     )
 
     print(
         "SCAN MODE: "
-        "ALL 14 DAYS EVERY 10 SECONDS"
+        "50 DAYS FULL SCAN / 2 WORKERS"
     )
 
     print(
-        "CYCLE INTERVAL:",
-        CHECK_INTERVAL,
-        "seconds",
+        "REQUEST START GAP:",
+        f"{REQUEST_GAP:.2f}s FIXED",
+    )
+
+    print(
+        "NEXT CYCLE: "
+        "IMMEDIATELY AFTER EACH 50-DAY SCAN"
     )
 
     print(
@@ -864,17 +1006,17 @@ def main():
         ),
     )
 
-    print("=" * 60)
-
-    session = requests.Session(
-        impersonate="chrome"
-    )
+    print("=" * 72)
 
     try:
+        session = requests.Session(
+            impersonate="chrome"
+        )
+
         r = session.get(
             "https://www.megabox.co.kr/",
             headers=HEADERS,
-            timeout=5,
+            timeout=8,
         )
 
         print(
@@ -893,19 +1035,21 @@ def main():
         )
 
     # --------------------------------------------------------
-    # 최초 기준값
+    # 최초/업그레이드 기준값
     # --------------------------------------------------------
 
     if not baseline_done():
         print()
-        print("=" * 60)
-        print("INITIAL BASELINE")
-        print("=" * 60)
+        print("=" * 72)
+        print("INITIAL 50-DAY BASELINE")
+        print("=" * 72)
+        print(
+            "현재 50일 전체 메가토크 / 무대인사 / DOLBY를 "
+            "알림 없이 기준값으로 등록합니다."
+        )
 
         events, failed_dates = (
-            collect_all_14_days(
-                session
-            )
+            collect_all_50_days()
         )
 
         if failed_dates:
@@ -946,9 +1090,7 @@ def main():
     # --------------------------------------------------------
 
     seen = load_seen()
-    monitor_started = (
-        time.monotonic()
-    )
+    monitor_started = time.monotonic()
     cycle_number = 0
 
     while True:
@@ -964,25 +1106,22 @@ def main():
             break
 
         cycle_number += 1
-        cycle_started = (
-            time.monotonic()
-        )
+        cycle_started = time.monotonic()
 
         print()
-        print("=" * 60)
+        print("=" * 72)
         print(
-            f"CYCLE #{cycle_number} "
-            f"{now_kst().strftime('%Y-%m-%d %H:%M:%S')} KST"
+            f"CYCLE #{cycle_number} | "
+            f"{now_kst().strftime('%Y-%m-%d %H:%M:%S')} KST | "
+            f"GAP={REQUEST_GAP:.2f}s"
         )
         print(
-            "14 DAYS FULL SCAN START"
+            "50 DAYS / 2 WORKERS FULL SCAN START"
         )
-        print("=" * 60)
+        print("=" * 72)
 
         events, failed_dates = (
-            collect_all_14_days(
-                session
-            )
+            collect_all_50_days()
         )
 
         print()
@@ -1023,24 +1162,10 @@ def main():
             f"{cycle_elapsed:.2f}s",
         )
 
-        sleep_time = (
-            CHECK_INTERVAL
-            - cycle_elapsed
+        print(
+            "WAIT: 0s "
+            "(next 50-day scan starts immediately)"
         )
-
-        if sleep_time > 0:
-            print(
-                f"WAIT {sleep_time:.2f}s "
-                "UNTIL NEXT FULL SCAN"
-            )
-            time.sleep(
-                sleep_time
-            )
-        else:
-            print(
-                "FULL SCAN TOOK >= 10s - "
-                "START NEXT CYCLE IMMEDIATELY"
-            )
 
     save_seen(seen)
 

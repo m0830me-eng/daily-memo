@@ -29,7 +29,7 @@ from curl_cffi import requests
 # - 매진이 잡힌 날짜는 20초 감시로 자동 승격
 # - 매시 00분/30분: +4~+21일 18일을 2 workers + 0.17초로 빠른 전체점검
 # - 2 workers 고정, 모든 API 요청 시작 간격 최소 0.17초
-# - 서버 과부하 시 현재 요청 묶음 중단 + 60/120/300초 단계 휴식
+# - 서버 과부하/연속 timeout 시 현재 요청 묶음 중단 + 60/120/300초 단계 휴식
 # ============================================================
 
 BRANCH_NO = "1351"
@@ -557,9 +557,15 @@ def request_schedule(
             reset_thread_session()
 
             if attempt < 2:
-                time.sleep(0.5)
+                # 순간 연결 끊김/timeout이면 새 세션으로 딱 1회 재시도.
+                time.sleep(1.0)
                 continue
 
+            # 두 번째도 timeout/연결 오류면 같은 묶음을 계속 두드리지 않고
+            # 과부하 보호 모드로 전환한다.
+            register_overload(
+                f"{label} request timeout/connection error"
+            )
             return None, True, last_error
 
         elapsed = time.monotonic() - started
@@ -1008,7 +1014,13 @@ def fetch_official_event_signals():
         return signals
 
     except Exception as e:
-        print("OFFICIAL EVENT PAGE ERROR:", repr(e))
+        # 공식 이벤트 페이지는 보조 신호일 뿐이므로 실패해도
+        # 시간표/좌석 상태는 절대 건드리지 않는다.
+        name = type(e).__name__
+        print(
+            f"⚠️ 공식 이벤트 페이지 일시 오류({name}) - "
+            "이번 확인만 건너뛰고 다음 주기에 재시도"
+        )
         return None
 
 

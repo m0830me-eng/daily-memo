@@ -63,7 +63,6 @@ INTERVAL_2_4 = 90.0
 INTERVAL_5_14 = 30.0
 INTERVAL_15_30 = 60.0
 INTERVAL_31_42 = 300.0
-SOLD_OUT_DATE_INTERVAL = 20.0
 MAX_DUE_DATES_PER_BATCH = 2
 
 # 정각/30분 빠른 전체점검: +4~+21일 = 18일
@@ -1025,24 +1024,23 @@ def fetch_official_event_signals():
 
 
 def send_official_signal(signal):
+    event_type = signal.get("type") or "이벤트"
+    display_type = (
+        "DOLBY CINEMA"
+        if event_type == "DOLBY"
+        else event_type
+    )
+    url = signal.get("url", EVENT_PAGE_URL)
+
     lines = []
 
     if DISCORD_USER_ID:
-        lines.extend([
-            f"<@{DISCORD_USER_ID}>",
-            "",
-        ])
-
-    event_type = signal.get("type") or "이벤트"
+        lines.append(f"<@{DISCORD_USER_ID}>")
 
     lines.extend([
-        f"**📣 메가박스 코엑스 · {event_type} 공식 이벤트 선행 감지**",
-        "",
-        "메가박스 공식 이벤트 페이지에서 코엑스 관련 신호가 확인됐습니다.",
-        "아직 실제 상영 회차가 시간표에 나오지 않았을 수 있습니다.",
-        "",
+        f"**🔎 {display_type} 공식 이벤트 신호가 감지됐습니다**",
+        f"**[🎬 {BRANCH_NAME} · {display_type}]({url})**",
         f"🔎 {signal.get('snippet', '')}",
-        f"🎟️ {signal.get('url', EVENT_PAGE_URL)}",
     ])
 
     return send_discord("\n".join(lines))
@@ -1273,10 +1271,17 @@ def state_record(event, status=None):
 
 
 def send_new_events(events, seen):
+    # 처음 발견했을 때 이미 매진인 회차는 사용자에게 알리지 않고
+    # seen에만 등록한다. 이후 좌석이 다시 생겨도 '신규'로 재알림되지 않는다.
+    for key, event in events.items():
+        if key not in seen and booking_status(event) == "SOLD_OUT":
+            seen.add(key)
+
     new_events = [
         (key, event)
         for key, event in events.items()
         if key not in seen
+        and booking_status(event) != "SOLD_OUT"
     ]
 
     if not new_events:
@@ -1301,22 +1306,15 @@ def send_new_events(events, seen):
             else event_type
         )
 
-        title = (
-            f"🎬 메가박스 코엑스 · "
-            f"{display_type} 새 상영 일정"
-        )
-
         lines = []
+
         if DISCORD_USER_ID:
-            lines.extend([
-                f"<@{DISCORD_USER_ID}>",
-                "",
-            ])
+            lines.append(f"<@{DISCORD_USER_ID}>")
 
         lines.extend([
-            f"**{title}**",
-            "",
-            f"📅 **{pretty_date(date)}**",
+            f"**🔎 {display_type}가 감지됐습니다**",
+            f"**🎬 {BRANCH_NAME} · {display_type}**",
+            f"**📅 {pretty_date(date)}**",
         ])
 
         items.sort(
@@ -1327,27 +1325,18 @@ def send_new_events(events, seen):
         )
 
         for key, event in items:
-            start = event["start"]
-            end = event["end"]
-            time_text = f"{start}~{end}" if end else start
-            movie = event["movie"]
-            screen = event["screen"]
-            linked_movie = f"[{movie}]({event['link']})"
+            start = event.get("start", "")
+            end = event.get("end", "")
+            time_text = f"{start}–{end}" if end else start
+            movie = event.get("movie") or "영화명 확인 필요"
+            screen = event.get("screen") or "상영관 정보 없음"
+            link = event.get("link") or (
+                f"https://www.megabox.co.kr/theater/time?brchNo={BRANCH_NO}"
+            )
 
-            seat = ""
-            if isinstance(event.get("rest_seat"), int):
-                seat = f" · 잔여 {event['rest_seat']}"
-                if isinstance(event.get("total_seat"), int):
-                    seat += f"/{event['total_seat']}"
-
-            if screen:
-                lines.append(
-                    f"🎟️ {time_text} · {linked_movie} · {screen}{seat}"
-                )
-            else:
-                lines.append(
-                    f"🎟️ {time_text} · {linked_movie}{seat}"
-                )
+            lines.append(
+                f"**[🎟 {time_text} · {movie} · {screen}]({link})**"
+            )
 
         print(
             "NEW EVENT GROUP:",
@@ -1366,103 +1355,28 @@ def send_new_events(events, seen):
     return sent_count, sent_keys
 
 
-def send_cancel_ticket(event):
-    display_type = (
-        "DOLBY CINEMA"
-        if event.get("type") == "DOLBY"
-        else event.get("type")
-    )
-
-    lines = []
-    if DISCORD_USER_ID:
-        lines.extend([
-            f"<@{DISCORD_USER_ID}>",
-            "",
-        ])
-
-    start = event.get("start", "")
-    end = event.get("end", "")
-    time_text = f"{start}~{end}" if end else start
-    movie = event.get("movie") or "영화명 확인 필요"
-    screen = event.get("screen") or "상영관 정보 없음"
-    rest = event.get("rest_seat")
-    total = event.get("total_seat")
-
-    seat_text = ""
-    if isinstance(rest, int):
-        seat_text = f"\n💺 잔여 {rest}"
-        if isinstance(total, int):
-            seat_text += f" / {total}"
-
-    lines.extend([
-        f"**🎟️ 메가박스 코엑스 · {display_type} 취소표가 나타났습니다**",
-        f"📅 {pretty_date(event['date'])}",
-        f"🎟️ {time_text} · [{movie}]({event['link']}) · {screen}{seat_text}",
-    ])
-
-    return send_discord("\n".join(lines))
-
-
 def process_booking_states(events, show_state):
-    cancel_sent = 0
-    sold_out_new = 0
-
+    """
+    예매 상태는 내부 중복방지/상태 보존용으로만 기록한다.
+    매진, 잔여 0, 매진 -> OPEN 변화는 사용자 로그/Discord에 알리지 않는다.
+    """
     for key, event in events.items():
         current = booking_status(event)
         previous_record = show_state.get(key) or {}
         previous = previous_record.get("status")
 
-        # 처음 본 회차는 현재 상태만 저장.
-        # 새 상영 일정 알림 자체는 seen 로직이 별도로 담당한다.
-        if previous is None:
-            show_state[key] = state_record(event, current)
-            continue
-
-        if current == "SOLD_OUT":
-            if previous != "SOLD_OUT":
-                sold_out_new += 1
-                print(
-                    "SOLD OUT STORED:",
-                    event.get("type"),
-                    event.get("movie"),
-                    event.get("date"),
-                    event.get("start"),
-                )
-
-            record = state_record(event, "SOLD_OUT")
-            record["sold_out_since_kst"] = (
-                previous_record.get("sold_out_since_kst")
-                if previous == "SOLD_OUT"
-                else now_kst().isoformat(timespec="seconds")
-            )
-            show_state[key] = record
-            continue
-
-        if current == "OPEN" and previous == "SOLD_OUT":
-            if send_cancel_ticket(event):
-                cancel_sent += 1
-                show_state[key] = state_record(event, "OPEN")
-            else:
-                # 전송 실패면 SOLD_OUT 상태를 유지해 다음 사이클에 재시도.
-                continue
-            continue
-
-        # 응답에서 좌석 필드가 일시적으로 빠진 UNKNOWN은 기존 상태를 지우지 않는다.
-        # 특히 SOLD_OUT 기억이 UNKNOWN으로 덮이면 다음 OPEN 때 취소표를 놓칠 수 있다.
         if current == "UNKNOWN":
+            # 일시적으로 좌석 필드가 빠졌다면 기존 확정 상태를 유지.
             if previous is None:
                 show_state[key] = state_record(event, "UNKNOWN")
             else:
-                preserved = state_record(event, previous)
-                if previous_record.get("sold_out_since_kst"):
-                    preserved["sold_out_since_kst"] = previous_record["sold_out_since_kst"]
-                show_state[key] = preserved
+                show_state[key] = state_record(event, previous)
             continue
 
-        # OPEN 등 일반 상태 갱신
         show_state[key] = state_record(event, current)
 
-    return cancel_sent, sold_out_new
+    # 기존 호출부 호환용. 취소표/매진 변화 카운트는 사용하지 않는다.
+    return 0, 0
 
 
 # ============================================================
@@ -1482,21 +1396,9 @@ def interval_for_offset(offset):
     return INTERVAL_31_42
 
 
-def sold_out_dates(show_state):
-    dates = set()
-    for record in show_state.values():
-        if not isinstance(record, dict):
-            continue
-        if record.get("status") == "SOLD_OUT" and record.get("date"):
-            dates.add(record["date"])
-    return dates
-
-
 def effective_interval(date, offset, show_state):
-    base = interval_for_offset(offset)
-    if date in sold_out_dates(show_state):
-        return min(base, SOLD_OUT_DATE_INTERVAL)
-    return base
+    # 매진 여부와 무관하게 기존 날짜 구간별 기본 주기만 사용한다.
+    return interval_for_offset(offset)
 
 
 def build_due_schedule(show_state):
@@ -1664,9 +1566,6 @@ def main():
         "GENERAL / DOLBY: 같은 날짜는 같은 감시 주기"
     )
     print(
-        "SOLD OUT BOOST: 매진이 잡힌 날짜는 20s"
-    )
-    print(
         "00/30 FAST SCAN: +4~+21일 18일 / 2 workers / 0.17s gap"
     )
 
@@ -1675,8 +1574,7 @@ def main():
         "메가토크(GV·관객과의 대화 포함) / 무대인사"
     )
     print(
-        "REOPEN: 매진 또는 잔여 0 -> 좌석 재발생 시 "
-        "'취소표가 나타났습니다'"
+        "SOLD OUT / REOPEN: 사용자 알림 없음 / 내부 상태만 저장"
     )
     print(
         f"LOG MODE: 기준값 10/20/30/40/{DAYS} 진행 + "
@@ -1886,7 +1784,7 @@ def main():
             heartbeat_soldout += sold_out_count
             heartbeat_failed_dates += len(failed_dates)
 
-            # Reschedule each checked date. Sold-out dates automatically get 20s.
+            # Reschedule each checked date using the normal date-bucket interval.
             reschedule_base = time.monotonic()
             for date in due_dates:
                 offset = offsets.get(date, DAYS - 1)
@@ -1974,8 +1872,7 @@ def main():
                 print(
                     f"✅ {safety_slot.strftime('%H:%M')} 빠른 전체점검 완료 | "
                     f"18/18 성공 | {safety_elapsed:.2f}초 | "
-                    f"새 일정 {safety_new} | 매진변화 {safety_soldout} | "
-                    f"취소표 {safety_cancel}"
+                    f"새 일정 {safety_new}"
                 )
                 note_clean_cycle()
             else:
@@ -2016,8 +1913,7 @@ def main():
                 f"메가토크 {latest_counts['메가토크']} | "
                 f"무대인사 {latest_counts['무대인사']} | "
                 f"DOLBY {latest_counts['DOLBY']} | "
-                f"새 일정 {heartbeat_new} | 매진변화 {heartbeat_soldout} | "
-                f"취소표 {heartbeat_cancel} | 공식선행 {heartbeat_official} | "
+                f"새 일정 {heartbeat_new} | 공식선행 {heartbeat_official} | "
                 f"API실패 {heartbeat_failed_dates}건 | "
                 f"현재 요청간격 {current_request_gap():.2f}s"
             )

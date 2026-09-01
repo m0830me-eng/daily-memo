@@ -29,7 +29,7 @@ from curl_cffi import requests
 # - 매진이 잡힌 날짜는 20초 감시로 자동 승격
 # - 매시 00분/30분: +4~+21일 18일을 2 workers + 0.17초로 빠른 전체점검
 # - 2 workers 고정, 모든 API 요청 시작 간격 최소 0.17초
-# - timeout은 해당 날짜/소스만 짧게 재시도, 실제 403/429/503만 전역 과부하 보호
+# - timeout은 7초 + 새 세션 0.5초 후 1회 즉시 재시도, 실제 403/429/503만 전역 과부하 보호
 # ============================================================
 
 BRANCH_NO = "1351"
@@ -38,49 +38,18 @@ BRANCH_NAME = "메가박스 코엑스"
 DAYS = 43
 WORKERS = 2
 REQUEST_GAP = 0.17
-
-OVERLOAD_GAP_STEPS = (
-    0.30,
-    0.40,
-    0.50,
-)
-
-OVERLOAD_COOLDOWN_STEPS = (
-    60.0,
-    120.0,
-    300.0,
-)
-
+OVERLOAD_GAP_STEPS = (0.30, 0.40, 0.50)
+OVERLOAD_COOLDOWN_STEPS = (60.0, 120.0, 300.0)
 OVERLOAD_RECOVERY_CYCLES = 10
-
-
-# ============================================================
-# Timeout / connection protection
-# ============================================================
 
 # 네트워크 timeout은 서버 과부하와 분리한다.
 # timeout 때문에 60/120/300초 전체 휴식으로 들어가지 않는다.
-
-SCHEDULE_TIMEOUT = 5.0
+SCHEDULE_TIMEOUT = 7.0
 MAIN_PAGE_TIMEOUT = 4.0
 OFFICIAL_EVENT_TIMEOUT = 4.0
-
 CONNECTION_RETRY_DELAY = 0.5
-
-# 실제 과부하로 판단할 HTTP 상태
-TRUE_OVERLOAD_STATUSES = {
-    403,
-    429,
-    503,
-}
-
-# 일시적인 서버 오류.
-# 해당 날짜/소스만 실패 처리하고 전역 휴식은 하지 않는다.
-TRANSIENT_HTTP_STATUSES = {
-    500,
-    502,
-    504,
-}
+TRUE_OVERLOAD_STATUSES = {403, 429, 503}
+TRANSIENT_HTTP_STATUSES = {500, 502, 504}
 
 RUN_SECONDS = int(
     os.environ.get(
@@ -89,38 +58,25 @@ RUN_SECONDS = int(
     )
 )
 
-KST = ZoneInfo(
-    "Asia/Seoul"
-)
+KST = ZoneInfo("Asia/Seoul")
 
 SCHEDULE_API = (
     "https://www.megabox.co.kr/"
     "on/oh/ohc/Brch/schedulePage.do"
 )
 
-STATE_FILE = (
-    "seen_megabox_coex.json"
-)
+STATE_FILE = "seen_megabox_coex.json"
+STATUS_FILE = "status_megabox_coex.json"
+BASELINE_FILE = "baseline_megabox_coex.done"
 
-STATUS_FILE = (
-    "status_megabox_coex.json"
-)
-
-BASELINE_FILE = (
-    "baseline_megabox_coex.done"
-)
-
-EVENT_PAGE_URL = (
-    "https://www.megabox.co.kr/event"
-)
+EVENT_PAGE_URL = "https://www.megabox.co.kr/event"
 
 OFFICIAL_EVENT_CHECK_INTERVAL = 120.0
-
 HEARTBEAT_INTERVAL = 600.0
 
 
 # ============================================================
-# 날짜별 감시 주기
+# GENERAL / DOLBY 공통 날짜별 감시 주기
 # ============================================================
 
 INTERVAL_0_1 = 20.0
@@ -141,7 +97,6 @@ SAFETY_SCAN_END_OFFSET = 21
 SAFETY_SCAN_EVERY_MINUTES = 30
 
 
-# 기존 기준값 호환
 BASELINE_SCHEMA = (
     "MEGABOX_COEX_43DAYS_STAGGERED_0030_V1"
 )
@@ -162,63 +117,31 @@ DISCORD_USER_ID = os.environ.get(
 ).strip()
 
 
-# ============================================================
-# Headers
-# ============================================================
-
 HEADERS = {
-    "Accept":
-        "application/json, text/plain, */*",
-
-    "Accept-Language":
-        "ko-KR,ko;q=0.9,en-US;q=0.8",
-
-    "Content-Type":
-        "application/x-www-form-urlencoded; charset=UTF-8",
-
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
+    "Content-Type": (
+        "application/x-www-form-urlencoded; charset=UTF-8"
+    ),
     "Referer": (
         "https://www.megabox.co.kr/"
         "theater/time?brchNo=1351"
     ),
-
-    "Origin":
-        "https://www.megabox.co.kr",
-
-    "X-Requested-With":
-        "XMLHttpRequest",
+    "Origin": "https://www.megabox.co.kr",
+    "X-Requested-With": "XMLHttpRequest",
 }
 
-
-BLOCK_STATUSES = {
-    403,
-    429,
-    500,
-    502,
-    503,
-    504,
-}
-
-
-# ============================================================
-# Thread / adaptive state
-# ============================================================
 
 _thread_local = threading.local()
 
 _rate_lock = threading.Lock()
-
 _next_request_time = 0.0
 
 _adaptive_lock = threading.Lock()
-
 _active_request_gap = REQUEST_GAP
-
 _overload_until = 0.0
-
 _overload_events = 0
-
 _overload_level = 0
-
 _clean_cycle_streak = 0
 
 _cycle_abort_event = threading.Event()
@@ -229,9 +152,7 @@ _cycle_abort_event = threading.Event()
 # ============================================================
 
 def now_kst():
-    return datetime.now(
-        KST
-    )
+    return datetime.now(KST)
 
 
 def make_dates():
@@ -239,14 +160,9 @@ def make_dates():
 
     return [
         (
-            today
-            + timedelta(days=i)
-        ).strftime(
-            "%Y%m%d"
-        )
-        for i in range(
-            DAYS
-        )
+            today + timedelta(days=i)
+        ).strftime("%Y%m%d")
+        for i in range(DAYS)
     ]
 
 
@@ -255,11 +171,8 @@ def make_safety_scan_dates():
 
     return [
         (
-            today
-            + timedelta(days=i)
-        ).strftime(
-            "%Y%m%d"
-        )
+            today + timedelta(days=i)
+        ).strftime("%Y%m%d")
         for i in range(
             SAFETY_SCAN_START_OFFSET,
             SAFETY_SCAN_END_OFFSET + 1,
@@ -267,14 +180,7 @@ def make_safety_scan_dates():
     ]
 
 
-def next_halfhour_boundary(
-    dt,
-):
-    """
-    현재 시각보다 뒤에 있는
-    다음 :00 또는 :30 경계 반환.
-    """
-
+def next_halfhour_boundary(dt):
     base = dt.replace(
         second=0,
         microsecond=0,
@@ -286,18 +192,12 @@ def next_halfhour_boundary(
         )
 
     return (
-        base.replace(
-            minute=0
-        )
-        + timedelta(
-            hours=1
-        )
+        base.replace(minute=0)
+        + timedelta(hours=1)
     )
 
 
-def pretty_date(
-    date,
-):
+def pretty_date(date):
     dt = datetime.strptime(
         date,
         "%Y%m%d",
@@ -314,9 +214,7 @@ def pretty_date(
     ]
 
     return (
-        f"{dt.year}."
-        f"{dt.month}."
-        f"{dt.day}"
+        f"{dt.year}.{dt.month}.{dt.day}"
         f"({weekdays[dt.weekday()]})"
     )
 
@@ -325,26 +223,18 @@ def pretty_date(
 # Discord
 # ============================================================
 
-def send_discord(
-    message,
-):
+def send_discord(message):
     if not DISCORD_WEBHOOK:
-        print(
-            "WEBHOOK MISSING"
-        )
+        print("WEBHOOK MISSING")
         return False
 
     payload = {
         "content": message,
-
-        # Discord 링크 미리보기 제거
         "flags": 4,
     }
 
     if DISCORD_USER_ID:
-        payload[
-            "allowed_mentions"
-        ] = {
+        payload["allowed_mentions"] = {
             "users": [
                 DISCORD_USER_ID
             ]
@@ -392,17 +282,13 @@ def load_seen():
             "r",
             encoding="utf-8",
         ) as f:
-            data = json.load(
-                f
-            )
+            data = json.load(f)
 
         if isinstance(
             data,
             list,
         ):
-            return set(
-                data
-            )
+            return set(data)
 
         return set()
 
@@ -415,9 +301,7 @@ def load_seen():
         return set()
 
 
-def save_seen(
-    seen,
-):
+def save_seen(seen):
     try:
         with open(
             STATE_FILE,
@@ -425,9 +309,7 @@ def save_seen(
             encoding="utf-8",
         ) as f:
             json.dump(
-                sorted(
-                    seen
-                ),
+                sorted(seen),
                 f,
                 ensure_ascii=False,
                 indent=2,
@@ -455,9 +337,7 @@ def load_status():
             "r",
             encoding="utf-8",
         ) as f:
-            data = json.load(
-                f
-            )
+            data = json.load(f)
 
         if not isinstance(
             data,
@@ -484,7 +364,6 @@ def load_status():
                 )
                 else {}
             ),
-
             "official_events": (
                 official_events
                 if isinstance(
@@ -507,9 +386,7 @@ def load_status():
         }
 
 
-def save_status(
-    status,
-):
+def save_status(status):
     try:
         with open(
             STATUS_FILE,
@@ -597,9 +474,7 @@ def get_session():
 
 def reset_thread_session():
     try:
-        _thread_local.session = (
-            None
-        )
+        _thread_local.session = None
 
     except Exception:
         pass
@@ -639,9 +514,7 @@ def reset_cycle_abort():
     _cycle_abort_event.clear()
 
 
-def register_overload(
-    reason,
-):
+def register_overload(reason):
     global _active_request_gap
     global _overload_until
     global _overload_events
@@ -653,22 +526,15 @@ def register_overload(
     should_log = False
     cooldown = 0.0
 
-    # 실제 과부하일 때만
-    # 현재 요청 묶음 중단
+    # 진짜 서버 과부하 신호일 때만
+    # 현재 묶음을 중지한다.
     _cycle_abort_event.set()
 
     with _adaptive_lock:
         _overload_events += 1
-
         _clean_cycle_streak = 0
 
-        # 동일 과부하 파동에서
-        # worker 두 개가 같이 실패해도
-        # 단계 상승은 한 번만
-        if (
-            now
-            >= _overload_until
-        ):
+        if now >= _overload_until:
             _overload_level = min(
                 len(
                     OVERLOAD_GAP_STEPS
@@ -693,17 +559,16 @@ def register_overload(
             )
 
             _overload_until = (
-                now
-                + cooldown
+                now + cooldown
             )
 
             should_log = True
 
     if should_log:
         print(
-            "⚠️ 메가박스 실제 서버 과부하 감지 -> "
-            "현재 조회 묶음 중단 / "
-            f"{cooldown:.0f}초 보호 / "
+            "⚠️ 메가박스 서버 과부하 감지 -> "
+            "현재 조회 묶음 즉시 중단 / "
+            f"{cooldown:.0f}초 휴식 / "
             f"재시도 간격 "
             f"{current_request_gap():.2f}s | "
             f"원인: {reason}"
@@ -727,9 +592,7 @@ def note_clean_cycle():
         ):
             _overload_level -= 1
 
-            if (
-                _overload_level == 0
-            ):
+            if _overload_level == 0:
                 _active_request_gap = (
                     REQUEST_GAP
                 )
@@ -775,9 +638,7 @@ def wait_rate_slot():
             )
 
         with _rate_lock:
-            now = (
-                time.monotonic()
-            )
+            now = time.monotonic()
 
             target = max(
                 _next_request_time,
@@ -802,13 +663,9 @@ def wait_rate_slot():
         )
 
 
-def extract_movie_form_list(
-    data,
-):
+def extract_movie_form_list(data):
     mega_map = (
-        data.get(
-            "megaMap"
-        )
+        data.get("megaMap")
         or {}
     )
 
@@ -843,7 +700,7 @@ def extract_movie_form_list(
 
 
 # ============================================================
-# Schedule request
+# Schedule API
 # ============================================================
 
 def request_schedule(
@@ -852,74 +709,45 @@ def request_schedule(
 ):
     if special:
         params = {
-            "masterType":
-                "brch",
-
-            "detailType":
-                "spcl",
-
-            "theabKindCd":
-                "DBC",
-
-            "brchNo":
-                BRANCH_NO,
-
-            "firstAt":
-                "N",
-
-            "brchNo1":
-                BRANCH_NO,
-
-            "spclbYn1":
-                "Y",
-
-            "theabKindCd1":
-                "DBC",
-
-            "crtDe":
-                now_kst().strftime(
-                    "%Y%m%d"
-                ),
-
-            "playDe":
-                date,
+            "masterType": "brch",
+            "detailType": "spcl",
+            "theabKindCd": "DBC",
+            "brchNo": BRANCH_NO,
+            "firstAt": "N",
+            "brchNo1": BRANCH_NO,
+            "spclbYn1": "Y",
+            "theabKindCd1": "DBC",
+            "crtDe": (
+                now_kst()
+                .strftime("%Y%m%d")
+            ),
+            "playDe": date,
         }
 
         label = "DOLBY"
 
     else:
         params = {
-            "masterType":
-                "brch",
-
-            "detailType":
-                "movie",
-
-            "brchNo":
-                BRANCH_NO,
-
-            "firstAt":
-                "N",
-
-            "brchNo1":
-                BRANCH_NO,
-
-            "spclbYn1":
-                "N",
-
-            "crtDe":
-                now_kst().strftime(
-                    "%Y%m%d"
-                ),
-
-            "playDe":
-                date,
+            "masterType": "brch",
+            "detailType": "movie",
+            "brchNo": BRANCH_NO,
+            "firstAt": "N",
+            "brchNo1": BRANCH_NO,
+            "spclbYn1": "N",
+            "crtDe": (
+                now_kst()
+                .strftime("%Y%m%d")
+            ),
+            "playDe": date,
         }
 
         label = "GENERAL"
 
     last_error = ""
 
+    # 최대 두 번:
+    # 1차 요청
+    # timeout/연결오류 → 0.5초 후 새 세션으로 1회 재시도
     for attempt in range(
         1,
         3,
@@ -969,6 +797,7 @@ def request_schedule(
                 f"ERROR {repr(e)}"
             )
 
+            # 무조건 기존 세션 폐기.
             reset_thread_session()
 
             error_text = (
@@ -991,24 +820,40 @@ def request_schedule(
                 in error_text
             )
 
-            # 핵심 수정:
-            # timeout은 서버 과부하로
-            # 취급하지 않는다.
-            #
-            # 이 날짜 / 이 소스만
-            # 실패로 처리한다.
-            #
-            # 전체 감시는 계속 돈다.
             if is_timeout:
+                if attempt < 2:
+                    print(
+                        f"↻ {label} {date} "
+                        "timeout -> "
+                        f"{CONNECTION_RETRY_DELAY:.1f}초 후 "
+                        "새 세션으로 1회 즉시 재시도"
+                    )
+
+                    time.sleep(
+                        CONNECTION_RETRY_DELAY
+                    )
+
+                    continue
+
+                # 두 번째 timeout까지 실패한 경우:
+                # 서버 과부하로 등록하지 않고
+                # 그 날짜/소스만 실패 처리.
                 return (
                     None,
                     True,
                     last_error,
                 )
 
-            # timeout이 아닌 실제 연결 오류만
-            # 새 세션으로 1회 재시도
+            # timeout 아닌 연결 오류도
+            # 새 세션으로 한 번만 재시도.
             if attempt < 2:
+                print(
+                    f"↻ {label} {date} "
+                    "connection error -> "
+                    f"{CONNECTION_RETRY_DELAY:.1f}초 후 "
+                    "새 세션으로 1회 즉시 재시도"
+                )
+
                 time.sleep(
                     CONNECTION_RETRY_DELAY
                 )
@@ -1026,9 +871,9 @@ def request_schedule(
             - started
         )
 
-        # --------------------------------------------
-        # 실제 과부하
-        # --------------------------------------------
+        # ----------------------------------------------------
+        # 진짜 과부하 신호
+        # ----------------------------------------------------
 
         if (
             response.status_code
@@ -1054,12 +899,10 @@ def request_schedule(
                 last_error,
             )
 
-        # --------------------------------------------
+        # ----------------------------------------------------
         # 500 / 502 / 504
-        #
-        # 전체 60/120/300초 정지 금지.
-        # 해당 날짜만 실패.
-        # --------------------------------------------
+        # 전체 감시 정지하지 않고 해당 요청만 실패
+        # ----------------------------------------------------
 
         if (
             response.status_code
@@ -1094,9 +937,7 @@ def request_schedule(
             )
 
         response_preview = (
-            response.text[
-                :160
-            ]
+            response.text[:160]
             .replace(
                 "\n",
                 " ",
@@ -1107,9 +948,6 @@ def request_schedule(
             )
         )
 
-        # 메가박스가 명시적으로
-        # Workload is so high 반환 시에만
-        # 과부하 보호 작동
         if (
             "Workload is so high"
             in response_preview
@@ -1146,8 +984,7 @@ def request_schedule(
             )
 
             retry_text = (
-                f" ATTEMPT="
-                f"{attempt}"
+                f" ATTEMPT={attempt}"
                 if attempt > 1
                 else ""
             )
@@ -1160,17 +997,14 @@ def request_schedule(
                     f"{date} "
                     "HTTP=200 "
                     f"{elapsed:.2f}s "
-                    f"ROWS="
-                    f"{len(rows)}"
+                    f"ROWS={len(rows)}"
                     f"{retry_text}"
                 ),
             )
 
         except Exception as e:
             preview = (
-                response.text[
-                    :120
-                ]
+                response.text[:120]
                 .replace(
                     "\n",
                     " ",
@@ -1190,9 +1024,6 @@ def request_schedule(
                 f"{preview!r}"
             )
 
-            # 정상 200인데 비정상 JSON이면
-            # 서버가 정상 응답을 못 준 것으로 보고
-            # 실제 과부하 보호.
             register_overload(
                 "HTTP 200 비정상 JSON"
             )
@@ -1217,12 +1048,10 @@ def request_schedule(
 
 
 # ============================================================
-# Row helpers / classification
+# Row helpers
 # ============================================================
 
-def all_text(
-    row,
-):
+def all_text(row):
     values = []
 
     for (
@@ -1241,24 +1070,18 @@ def all_text(
     )
 
 
-def is_stage(
-    row,
-):
+def is_stage(row):
     text = all_text(
         row
     )
 
     return (
-        "무대인사"
-        in text
-        or "舞台挨拶"
-        in text
+        "무대인사" in text
+        or "舞台挨拶" in text
     )
 
 
-def is_megatalk(
-    row,
-):
+def is_megatalk(row):
     text = all_text(
         row
     )
@@ -1273,19 +1096,12 @@ def is_megatalk(
         text.upper()
     )
 
-    if (
-        "메가토크"
-        in compact
-    ):
+    if "메가토크" in compact:
         return True
 
-    if (
-        "관객과의대화"
-        in compact
-    ):
+    if "관객과의대화" in compact:
         return True
 
-    # 메가박스가 GV라고만 쓰는 경우
     if re.search(
         r"(?<![A-Z0-9])GV(?![A-Z0-9])",
         upper,
@@ -1295,9 +1111,7 @@ def is_megatalk(
     return False
 
 
-def is_dolby(
-    row,
-):
+def is_dolby(row):
     fields = [
         "playKindNm",
         "playKindName",
@@ -1313,17 +1127,13 @@ def is_dolby(
             row.get(field)
             or ""
         )
-        for field
-        in fields
+        for field in fields
     ).upper()
 
     return (
-        "DBC"
-        in text
-        or "DOLBY"
-        in text
-        or "돌비"
-        in text
+        "DBC" in text
+        or "DOLBY" in text
+        or "돌비" in text
     )
 
 
@@ -1331,21 +1141,15 @@ def get_target_type(
     row,
     from_dolby=False,
 ):
-    if is_stage(
-        row
-    ):
+    if is_stage(row):
         return "무대인사"
 
-    if is_megatalk(
-        row
-    ):
+    if is_megatalk(row):
         return "메가토크"
 
     if (
         from_dolby
-        or is_dolby(
-            row
-        )
+        or is_dolby(row)
     ):
         return "DOLBY"
 
@@ -1356,100 +1160,59 @@ def get_target_type(
 # Event fields
 # ============================================================
 
-def clean_text(
-    value,
-):
+def clean_text(value):
     return html.unescape(
         str(
-            value
-            or ""
+            value or ""
         )
     ).strip()
 
 
-def get_movie(
-    row,
-):
+def get_movie(row):
     return clean_text(
-        row.get(
-            "movieNm"
-        )
-        or row.get(
-            "movNm"
-        )
+        row.get("movieNm")
+        or row.get("movNm")
         or ""
     )
 
 
-def get_start(
-    row,
-):
+def get_start(row):
     return clean_text(
-        row.get(
-            "playStartTime"
-        )
-        or row.get(
-            "scnsrtTm"
-        )
+        row.get("playStartTime")
+        or row.get("scnsrtTm")
         or ""
     )
 
 
-def get_end(
-    row,
-):
+def get_end(row):
     return clean_text(
-        row.get(
-            "playEndTime"
-        )
-        or row.get(
-            "scnsEndTime"
-        )
+        row.get("playEndTime")
+        or row.get("scnsEndTime")
         or ""
     )
 
 
-def get_screen(
-    row,
-):
+def get_screen(row):
     return clean_text(
-        row.get(
-            "theabExpoNm"
-        )
-        or row.get(
-            "theabNm"
-        )
-        or row.get(
-            "screenNm"
-        )
-        or row.get(
-            "scnsNm"
-        )
+        row.get("theabExpoNm")
+        or row.get("theabNm")
+        or row.get("screenNm")
+        or row.get("scnsNm")
         or ""
     )
 
 
-def get_schedule_no(
-    row,
-):
+def get_schedule_no(row):
     return clean_text(
-        row.get(
-            "playSchdlNo"
-        )
-        or row.get(
-            "playScheduleNo"
-        )
+        row.get("playSchdlNo")
+        or row.get("playScheduleNo")
         or ""
     )
 
 
-def make_booking_link(
-    row,
-):
+def make_booking_link(row):
     schedule_no = (
-        get_schedule_no(
-            row
-        )
+        get_schedule_no(row)
     )
 
     if schedule_no:
@@ -1461,18 +1224,14 @@ def make_booking_link(
         )
 
     date = clean_text(
-        row.get(
-            "playDe"
-        )
+        row.get("playDe")
         or ""
     )
 
     if not date:
         date = (
             now_kst()
-            .strftime(
-                "%Y%m%d"
-            )
+            .strftime("%Y%m%d")
         )
 
     return (
@@ -1489,9 +1248,7 @@ def event_key(
     event_type,
 ):
     schedule_no = (
-        get_schedule_no(
-            row
-        )
+        get_schedule_no(row)
     )
 
     if schedule_no:
@@ -1504,39 +1261,20 @@ def event_key(
 
     return "|".join([
         BRANCH_NO,
-
         date,
-
         clean_text(
-            row.get(
-                "movieNo"
-            )
+            row.get("movieNo")
             or ""
         ),
-
-        get_movie(
-            row
-        ),
-
-        get_start(
-            row
-        ),
-
-        get_end(
-            row
-        ),
-
-        get_screen(
-            row
-        ),
-
+        get_movie(row),
+        get_start(row),
+        get_end(row),
+        get_screen(row),
         event_type,
     ])
 
 
-def to_int(
-    value,
-):
+def to_int(value):
     try:
         if (
             value is None
@@ -1545,13 +1283,8 @@ def to_int(
             return None
 
         return int(
-            str(
-                value
-            )
-            .replace(
-                ",",
-                "",
-            )
+            str(value)
+            .replace(",", "")
             .strip()
         )
 
@@ -1559,9 +1292,7 @@ def to_int(
         return None
 
 
-def get_rest_seat(
-    row,
-):
+def get_rest_seat(row):
     for key in (
         "restSeatCnt",
         "restSeatCount",
@@ -1569,9 +1300,7 @@ def get_rest_seat(
         "remainSeatCount",
     ):
         value = to_int(
-            row.get(
-                key
-            )
+            row.get(key)
         )
 
         if value is not None:
@@ -1580,9 +1309,7 @@ def get_rest_seat(
     return None
 
 
-def get_total_seat(
-    row,
-):
+def get_total_seat(row):
     for key in (
         "totSeatCnt",
         "totSeatCount",
@@ -1590,9 +1317,7 @@ def get_total_seat(
         "totalSeatCnt",
     ):
         value = to_int(
-            row.get(
-                key
-            )
+            row.get(key)
         )
 
         if value is not None:
@@ -1601,9 +1326,7 @@ def get_total_seat(
     return None
 
 
-def booking_status(
-    event,
-):
+def booking_status(event):
     if event.get(
         "sold_out_explicit"
     ):
@@ -1632,9 +1355,7 @@ def normalize_event(
     event_type,
 ):
     row_text = (
-        all_text(
-            row
-        )
+        all_text(row)
     )
 
     row_upper = (
@@ -1642,85 +1363,41 @@ def normalize_event(
     )
 
     sold_out_explicit = (
-        "매진"
-        in row_text
-        or "SOLD_OUT"
-        in row_upper
-        or "SOLDOUT"
-        in row_upper
+        "매진" in row_text
+        or "SOLD_OUT" in row_upper
+        or "SOLDOUT" in row_upper
     )
 
     return {
-        "date":
-            date,
-
-        "type":
-            event_type,
-
-        "movie":
-            get_movie(
-                row
-            ),
-
-        "start":
-            get_start(
-                row
-            ),
-
-        "end":
-            get_end(
-                row
-            ),
-
-        "screen":
-            get_screen(
-                row
-            ),
-
-        "schedule_no":
-            get_schedule_no(
-                row
-            ),
-
-        "link":
-            make_booking_link(
-                row
-            ),
-
-        "rest_seat":
-            get_rest_seat(
-                row
-            ),
-
-        "total_seat":
-            get_total_seat(
-                row
-            ),
-
-        "sold_out_explicit":
-            sold_out_explicit,
+        "date": date,
+        "type": event_type,
+        "movie": get_movie(row),
+        "start": get_start(row),
+        "end": get_end(row),
+        "screen": get_screen(row),
+        "schedule_no": get_schedule_no(row),
+        "link": make_booking_link(row),
+        "rest_seat": get_rest_seat(row),
+        "total_seat": get_total_seat(row),
+        "sold_out_explicit": (
+            sold_out_explicit
+        ),
     }
 
 
 # ============================================================
-# Official event page early signal
+# Official event page
 # ============================================================
 
-def compact_ws(
-    text,
-):
+def compact_ws(text):
     return re.sub(
         r"\s+",
         " ",
-        clean_text(
-            text
-        ),
+        clean_text(text),
     ).strip()
 
 
-def strip_tags(
-    text,
-):
+def strip_tags(text):
     text = re.sub(
         r"(?is)<(script|style).*?>.*?</\1>",
         " ",
@@ -1734,15 +1411,11 @@ def strip_tags(
     )
 
     return compact_ws(
-        html.unescape(
-            text
-        )
+        html.unescape(text)
     )
 
 
-def classify_event_text(
-    text,
-):
+def classify_event_text(text):
     compact = re.sub(
         r"\s+",
         "",
@@ -1754,18 +1427,14 @@ def classify_event_text(
     )
 
     if (
-        "무대인사"
-        in compact
-        or "舞台挨拶"
-        in text
+        "무대인사" in compact
+        or "舞台挨拶" in text
     ):
         return "무대인사"
 
     if (
-        "메가토크"
-        in compact
-        or "관객과의대화"
-        in compact
+        "메가토크" in compact
+        or "관객과의대화" in compact
         or re.search(
             r"(?<![A-Z0-9])GV(?![A-Z0-9])",
             upper,
@@ -1777,14 +1446,6 @@ def classify_event_text(
 
 
 def fetch_official_event_signals():
-    """
-    공식 이벤트 페이지 HTML에서
-    코엑스 이벤트 선행 신호를 찾는다.
-
-    이 페이지는 보조 신호다.
-    실패해도 실제 시간표 상태에는 영향 없음.
-    """
-
     try:
         session = requests.Session(
             impersonate="chrome"
@@ -1799,12 +1460,12 @@ def fetch_official_event_signals():
                     "application/xml;q=0.9,"
                     "*/*;q=0.8"
                 ),
-
-                "Accept-Language":
-                    "ko-KR,ko;q=0.9",
-
-                "Referer":
-                    "https://www.megabox.co.kr/",
+                "Accept-Language": (
+                    "ko-KR,ko;q=0.9"
+                ),
+                "Referer": (
+                    "https://www.megabox.co.kr/"
+                ),
             },
             timeout=OFFICIAL_EVENT_TIMEOUT,
         )
@@ -1821,14 +1482,10 @@ def fetch_official_event_signals():
 
             return None
 
-        raw = (
-            response.text
-        )
+        raw = response.text
 
         visible = (
-            strip_tags(
-                raw
-            )
+            strip_tags(raw)
         )
 
         signals = {}
@@ -1851,16 +1508,12 @@ def fetch_official_event_signals():
         ):
             start = max(
                 0,
-                match.start()
-                - 350,
+                match.start() - 350,
             )
 
             end = min(
-                len(
-                    visible
-                ),
-                match.end()
-                + 350,
+                len(visible),
+                match.end() + 350,
             )
 
             context = compact_ws(
@@ -1881,16 +1534,11 @@ def fetch_official_event_signals():
                 )
             )
 
-            if (
-                event_type
-                is None
-            ):
+            if event_type is None:
                 continue
 
             snippet = (
-                context[
-                    :500
-                ]
+                context[:500]
             )
 
             signature = hashlib.sha1(
@@ -1906,20 +1554,15 @@ def fetch_official_event_signals():
             signals[
                 signature
             ] = {
-                "type":
-                    event_type,
-
-                "snippet":
-                    snippet,
-
-                "url":
-                    EVENT_PAGE_URL,
-
-                "detected_at_kst":
+                "type": event_type,
+                "snippet": snippet,
+                "url": EVENT_PAGE_URL,
+                "detected_at_kst": (
                     now_kst()
                     .isoformat(
                         timespec="seconds"
-                    ),
+                    )
+                ),
             }
 
         return signals
@@ -1940,20 +1583,15 @@ def fetch_official_event_signals():
         return None
 
 
-def send_official_signal(
-    signal,
-):
+def send_official_signal(signal):
     event_type = (
-        signal.get(
-            "type"
-        )
+        signal.get("type")
         or "이벤트"
     )
 
     display_type = (
         "DOLBY CINEMA"
-        if event_type
-        == "DOLBY"
+        if event_type == "DOLBY"
         else event_type
     )
 
@@ -1976,14 +1614,12 @@ def send_official_signal(
             "공식 이벤트 신호가 "
             "감지됐습니다**"
         ),
-
         (
             f"**[🎬 "
             f"{BRANCH_NAME} · "
             f"{display_type}]"
             f"({url})**"
         ),
-
         (
             f"🔎 "
             f"{signal.get('snippet', '')}"
@@ -1991,9 +1627,7 @@ def send_official_signal(
     ])
 
     return send_discord(
-        "\n".join(
-            lines
-        )
+        "\n".join(lines)
     )
 
 
@@ -2010,10 +1644,7 @@ def process_official_signals(
         key,
         signal,
     ) in signals.items():
-        if (
-            key
-            in official_state
-        ):
+        if key in official_state:
             continue
 
         if send_official_signal(
@@ -2029,7 +1660,7 @@ def process_official_signals(
 
 
 # ============================================================
-# Collect
+# Collect date
 # ============================================================
 
 def collect_date(
@@ -2037,15 +1668,10 @@ def collect_date(
     date,
 ):
     events = {}
-
     problem = False
-
     logs = []
 
-    # --------------------------------------------
     # GENERAL
-    # --------------------------------------------
-
     (
         general_rows,
         general_problem,
@@ -2066,20 +1692,11 @@ def collect_date(
 
     if cycle_aborted():
         return {
-            "index":
-                index,
-
-            "date":
-                date,
-
-            "events":
-                events,
-
-            "problem":
-                True,
-
-            "logs":
-                logs,
+            "index": index,
+            "date": date,
+            "events": events,
+            "problem": True,
+            "logs": logs,
         }
 
     if general_rows is None:
@@ -2113,10 +1730,7 @@ def collect_date(
             event_type,
         )
 
-    # --------------------------------------------
     # DOLBY
-    # --------------------------------------------
-
     (
         dolby_rows,
         dolby_problem,
@@ -2146,10 +1760,7 @@ def collect_date(
             )
         )
 
-        if (
-            event_type
-            is None
-        ):
+        if event_type is None:
             continue
 
         key = event_key(
@@ -2167,36 +1778,30 @@ def collect_date(
         )
 
     return {
-        "index":
-            index,
-
-        "date":
-            date,
-
-        "events":
-            events,
-
-        "problem":
-            problem,
-
-        "logs":
-            logs,
+        "index": index,
+        "date": date,
+        "events": events,
+        "problem": problem,
+        "logs": logs,
     }
 
+
+# ============================================================
+# 43-day baseline collect
+# ============================================================
 
 def collect_all_days(
     progress=False,
 ):
     all_events = {}
-
     failed_dates = []
-
     results = []
 
-    dates = make_dates()
+    dates = (
+        make_dates()
+    )
 
     reset_cycle_abort()
-
     reset_rate_clock()
 
     with ThreadPoolExecutor(
@@ -2256,17 +1861,12 @@ def collect_all_days(
 
     results.sort(
         key=lambda item:
-            item[
-                "index"
-            ]
+            item["index"]
     )
 
     returned_dates = {
-        item[
-            "date"
-        ]
-        for item
-        in results
+        item["date"]
+        for item in results
     }
 
     for date in dates:
@@ -2281,35 +1881,25 @@ def collect_all_days(
     error_examples = []
 
     for item in results:
-        # 부분 성공 결과도 모은다.
+        # 부분 성공 데이터도 유지
         all_events.update(
-            item[
-                "events"
-            ]
+            item["events"]
         )
 
-        if item[
-            "problem"
-        ]:
+        if item["problem"]:
             failed_dates.append(
-                item[
-                    "date"
-                ]
+                item["date"]
             )
 
             if (
-                len(
-                    error_examples
-                )
+                len(error_examples)
                 < 3
             ):
                 error_examples.append(
                     (
                         f"{item['date']}: "
                         + " | ".join(
-                            item[
-                                "logs"
-                            ]
+                            item["logs"]
                         )
                     )
                 )
@@ -2324,9 +1914,7 @@ def collect_all_days(
         )
 
     failed_dates = sorted(
-        set(
-            failed_dates
-        )
+        set(failed_dates)
     )
 
     return (
@@ -2336,7 +1924,7 @@ def collect_all_days(
 
 
 # ============================================================
-# Discord / booking-state transitions
+# Booking-state
 # ============================================================
 
 def state_record(
@@ -2351,92 +1939,72 @@ def state_record(
     )
 
     return {
-        "status":
-            current_status,
-
-        "date":
+        "status": current_status,
+        "date": event.get(
+            "date",
+            "",
+        ),
+        "type": event.get(
+            "type",
+            "",
+        ),
+        "movie": event.get(
+            "movie",
+            "",
+        ),
+        "start": event.get(
+            "start",
+            "",
+        ),
+        "end": event.get(
+            "end",
+            "",
+        ),
+        "screen": event.get(
+            "screen",
+            "",
+        ),
+        "schedule_no": event.get(
+            "schedule_no",
+            "",
+        ),
+        "rest_seat": event.get(
+            "rest_seat"
+        ),
+        "total_seat": event.get(
+            "total_seat"
+        ),
+        "sold_out_explicit": bool(
             event.get(
-                "date",
-                "",
-            ),
-
-        "type":
-            event.get(
-                "type",
-                "",
-            ),
-
-        "movie":
-            event.get(
-                "movie",
-                "",
-            ),
-
-        "start":
-            event.get(
-                "start",
-                "",
-            ),
-
-        "end":
-            event.get(
-                "end",
-                "",
-            ),
-
-        "screen":
-            event.get(
-                "screen",
-                "",
-            ),
-
-        "schedule_no":
-            event.get(
-                "schedule_no",
-                "",
-            ),
-
-        "rest_seat":
-            event.get(
-                "rest_seat"
-            ),
-
-        "total_seat":
-            event.get(
-                "total_seat"
-            ),
-
-        "sold_out_explicit":
-            bool(
-                event.get(
-                    "sold_out_explicit"
-                )
-            ),
-
-        "updated_at_kst":
+                "sold_out_explicit"
+            )
+        ),
+        "updated_at_kst": (
             now_kst()
             .isoformat(
                 timespec="seconds"
-            ),
+            )
+        ),
     }
 
+
+# ============================================================
+# New-event Discord notification
+# ============================================================
 
 def send_new_events(
     events,
     seen,
 ):
-    # 처음 발견 시 이미 매진이면
-    # 사용자 알림 없이 seen만 저장
+    # 처음 발견했는데 이미 매진이면
+    # Discord 알림 없이 seen 등록.
     for (
         key,
         event,
     ) in events.items():
         if (
-            key
-            not in seen
-            and booking_status(
-                event
-            )
+            key not in seen
+            and booking_status(event)
             == "SOLD_OUT"
         ):
             seen.add(
@@ -2453,11 +2021,8 @@ def send_new_events(
             event,
         ) in events.items()
         if (
-            key
-            not in seen
-            and booking_status(
-                event
-            )
+            key not in seen
+            and booking_status(event)
             != "SOLD_OUT"
         )
     ]
@@ -2468,8 +2033,8 @@ def send_new_events(
             set(),
         )
 
-    # 같은 날짜 + 같은 종류는
-    # Discord 한 메시지로 묶음
+    # 같은 날짜 + 같은 이벤트 종류
+    # 한 메시지로 묶기
     groups = {}
 
     for (
@@ -2477,13 +2042,8 @@ def send_new_events(
         event,
     ) in new_events:
         group_key = (
-            event[
-                "date"
-            ],
-
-            event[
-                "type"
-            ],
+            event["date"],
+            event["type"],
         )
 
         groups.setdefault(
@@ -2497,7 +2057,6 @@ def send_new_events(
         )
 
     sent_count = 0
-
     sent_keys = set()
 
     for (
@@ -2511,8 +2070,7 @@ def send_new_events(
     ):
         display_type = (
             "DOLBY CINEMA"
-            if event_type
-            == "DOLBY"
+            if event_type == "DOLBY"
             else event_type
         )
 
@@ -2529,13 +2087,11 @@ def send_new_events(
                 f"{display_type}가 "
                 "감지됐습니다**"
             ),
-
             (
                 f"**🎬 "
                 f"{BRANCH_NAME} · "
                 f"{display_type}**"
             ),
-
             (
                 f"**📅 "
                 f"{pretty_date(date)}**"
@@ -2544,17 +2100,8 @@ def send_new_events(
 
         items.sort(
             key=lambda x: (
-                x[
-                    1
-                ][
-                    "start"
-                ],
-
-                x[
-                    1
-                ][
-                    "movie"
-                ],
+                x[1]["start"],
+                x[1]["movie"],
             )
         )
 
@@ -2579,23 +2126,17 @@ def send_new_events(
             )
 
             movie = (
-                event.get(
-                    "movie"
-                )
+                event.get("movie")
                 or "영화명 확인 필요"
             )
 
             screen = (
-                event.get(
-                    "screen"
-                )
+                event.get("screen")
                 or "상영관 정보 없음"
             )
 
             link = (
-                event.get(
-                    "link"
-                )
+                event.get("link")
                 or (
                     "https://www.megabox.co.kr/"
                     "theater/time"
@@ -2618,15 +2159,11 @@ def send_new_events(
             event_type,
             date,
             "COUNT=",
-            len(
-                items
-            ),
+            len(items),
         )
 
         if send_discord(
-            "\n".join(
-                lines
-            )
+            "\n".join(lines)
         ):
             for (
                 key,
@@ -2653,12 +2190,8 @@ def process_booking_states(
     show_state,
 ):
     """
-    예매 상태는 내부 상태 보존용.
-
-    매진 /
-    잔여 0 /
-    매진 -> OPEN은
-    사용자에게 알리지 않는다.
+    예매 상태는 내부 중복방지/상태 보존용으로만 기록.
+    매진/잔여 0/매진→OPEN 변화는 사용자에게 알리지 않는다.
     """
 
     for (
@@ -2666,15 +2199,11 @@ def process_booking_states(
         event,
     ) in events.items():
         current = (
-            booking_status(
-                event
-            )
+            booking_status(event)
         )
 
         previous_record = (
-            show_state.get(
-                key
-            )
+            show_state.get(key)
             or {}
         )
 
@@ -2684,14 +2213,8 @@ def process_booking_states(
             )
         )
 
-        if (
-            current
-            == "UNKNOWN"
-        ):
-            if (
-                previous
-                is None
-            ):
+        if current == "UNKNOWN":
+            if previous is None:
                 show_state[
                     key
                 ] = state_record(
@@ -2770,7 +2293,7 @@ def error_retry_interval(
     offset,
 ):
     """
-    실패한 날짜만 빠르게 재확인한다.
+    실패 날짜만 짧게 재확인.
     전체 감시는 멈추지 않는다.
     """
 
@@ -2828,9 +2351,7 @@ def build_due_schedule(
     ) in groups.items():
         count = max(
             1,
-            len(
-                items
-            ),
+            len(items),
         )
 
         for (
@@ -2856,19 +2377,11 @@ def build_due_schedule(
     return next_due
 
 
-def collect_due_dates(
-    dates,
-):
-    """
-    지금 확인할 날짜만 조회.
+# ============================================================
+# Normal due-date scan
+# ============================================================
 
-    날짜별 GENERAL + DOLBY를 확인.
-
-    한 소스가 실패해도
-    다른 소스가 성공했다면
-    성공한 이벤트 데이터는 반환한다.
-    """
-
+def collect_due_dates(dates):
     if not dates:
         return (
             {},
@@ -2876,13 +2389,10 @@ def collect_due_dates(
         )
 
     all_events = {}
-
     failed_dates = []
-
     results = []
 
     reset_cycle_abort()
-
     reset_rate_clock()
 
     with ThreadPoolExecutor(
@@ -2933,9 +2443,8 @@ def collect_due_dates(
     error_examples = []
 
     for item in results:
-        # 핵심:
-        # GENERAL 또는 DOLBY 한쪽이 실패해도
-        # 성공한 쪽에서 받아온 신규 이벤트를 버리지 않는다.
+        # GENERAL 또는 DOLBY 하나만 성공해도
+        # 성공한 실제 이벤트 데이터는 살린다.
         all_events.update(
             item.get(
                 "events",
@@ -2954,9 +2463,7 @@ def collect_due_dates(
             )
 
             if (
-                len(
-                    error_examples
-                )
+                len(error_examples)
                 < 2
             ):
                 error_examples.append(
@@ -2972,11 +2479,8 @@ def collect_due_dates(
                 )
 
     returned_dates = {
-        item.get(
-            "date"
-        )
-        for item
-        in results
+        item.get("date")
+        for item in results
     }
 
     for date in dates:
@@ -2991,8 +2495,7 @@ def collect_due_dates(
     failed_dates = sorted(
         set(
             d
-            for d
-            in failed_dates
+            for d in failed_dates
             if d
         )
     )
@@ -3013,7 +2516,7 @@ def collect_due_dates(
 
 
 # ============================================================
-# Heartbeat count cache
+# Count cache
 # ============================================================
 
 def state_count_cache(
@@ -3041,10 +2544,8 @@ def state_count_cache(
         )
 
         if (
-            date
-            not in valid_dates
-            or kind
-            not in {
+            date not in valid_dates
+            or kind not in {
                 "메가토크",
                 "무대인사",
                 "DOLBY",
@@ -3093,9 +2594,7 @@ def total_counts_from_cache(
 # Diagnostics
 # ============================================================
 
-def count_events(
-    events,
-):
+def count_events(events):
     counts = {
         "메가토크": 0,
         "무대인사": 0,
@@ -3103,17 +2602,12 @@ def count_events(
     }
 
     for event in events.values():
-        event_type = (
-            event.get(
-                "type",
-                "",
-            )
+        event_type = event.get(
+            "type",
+            "",
         )
 
-        if (
-            event_type
-            in counts
-        ):
+        if event_type in counts:
             counts[
                 event_type
             ] += 1
@@ -3121,13 +2615,9 @@ def count_events(
     return counts
 
 
-def print_counts(
-    events,
-):
+def print_counts(events):
     counts = (
-        count_events(
-            events
-        )
+        count_events(events)
     )
 
     print(
@@ -3247,7 +2737,8 @@ def main():
         f"기준값 "
         f"10/20/30/40/{DAYS} 진행 + "
         "정상 감시는 10분 요약 / "
-        "timeout은 날짜별 재시도 / "
+        "timeout은 7초 후 "
+        "0.5초 새 세션 즉시재시도 / "
         "실제 과부하만 자동완화"
     )
 
@@ -3268,9 +2759,8 @@ def main():
     )
 
     # ========================================================
-    # 메인 페이지 체크
-    #
-    # 실패해도 시간표 API 감시는 계속
+    # 메인페이지 체크
+    # 실패해도 실제 감시는 계속
     # ========================================================
 
     try:
@@ -3301,7 +2791,7 @@ def main():
         )
 
     # ========================================================
-    # 최초 / 업그레이드 기준값
+    # 최초 기준값
     # ========================================================
 
     if not baseline_done():
@@ -3322,8 +2812,7 @@ def main():
         print(
             "현재 43일 전체 "
             "메가토크(GV 포함) / "
-            "무대인사 / "
-            "DOLBY와 "
+            "무대인사 / DOLBY와 "
             "공식 이벤트 선행 신호를 "
             "알림 없이 기준값으로 등록합니다."
         )
@@ -3358,10 +2847,7 @@ def main():
             fetch_official_event_signals()
         )
 
-        if (
-            official_signals
-            is None
-        ):
+        if official_signals is None:
             official_signals = {}
 
         status = {
@@ -3374,16 +2860,14 @@ def main():
                     event,
                 ) in events.items()
             },
-
-            "official_events":
-                official_signals,
+            "official_events": (
+                official_signals
+            ),
         }
 
         print(
             "BASELINE EVENT COUNT:",
-            len(
-                seen
-            ),
+            len(seen),
         )
 
         print(
@@ -3430,12 +2914,12 @@ def main():
 
     seen = load_seen()
 
-    status = load_status()
+    status = (
+        load_status()
+    )
 
     show_state = (
-        status[
-            "shows"
-        ]
+        status["shows"]
     )
 
     official_state = (
@@ -3506,7 +2990,7 @@ def main():
     )
 
     # ========================================================
-    # Main monitoring loop
+    # Monitoring loop
     # ========================================================
 
     while True:
@@ -3537,12 +3021,9 @@ def main():
             ) in sorted(
                 next_due.items(),
                 key=lambda x:
-                    x[
-                        1
-                    ],
+                    x[1],
             )
-            if due
-            <= now_mono
+            if due <= now_mono
         ][
             :MAX_DUE_DATES_PER_BATCH
         ]
@@ -3565,27 +3046,15 @@ def main():
             )
 
             valid_dates = (
-                set(
-                    due_dates
-                )
+                set(due_dates)
                 - set(
                     failed_dates
                 )
             )
 
-            # =================================================
-            # 핵심 수정
-            #
-            # GENERAL timeout + DOLBY 성공
-            # -> DOLBY 이벤트는 즉시 감지
-            #
-            # DOLBY timeout + GENERAL 성공
-            # -> 메가토크/무대인사는 즉시 감지
-            #
-            # 실패한 한쪽 때문에
-            # 성공 데이터까지 버리지 않는다.
-            # =================================================
-
+            # GENERAL이 timeout이어도
+            # DOLBY가 성공했다면 DOLBY 신규 일정 사용.
+            # 반대도 동일.
             valid_events = dict(
                 events
             )
@@ -3598,7 +3067,7 @@ def main():
                     "🛡️ 실제 과부하 신호가 있었지만 "
                     "성공 응답에서 확보한 이벤트는 "
                     "감지에 사용하고, "
-                    "실패 소스의 상태는 유지합니다."
+                    "실패 소스 상태는 유지합니다."
                 )
 
             if (
@@ -3621,8 +3090,8 @@ def main():
                     show_state,
                 )
 
-                # 성공한 날짜만
-                # heartbeat cache 교체
+                # 완전히 성공한 날짜만
+                # count cache 교체
                 for date in valid_dates:
                     date_events = {
                         k: e
@@ -3630,9 +3099,7 @@ def main():
                             k,
                             e,
                         ) in valid_events.items()
-                        if e.get(
-                            "date"
-                        )
+                        if e.get("date")
                         == date
                     }
 
@@ -3662,9 +3129,7 @@ def main():
                 sold_out_count = 0
 
             heartbeat_date_checks += (
-                len(
-                    due_dates
-                )
+                len(due_dates)
             )
 
             heartbeat_new += (
@@ -3680,21 +3145,10 @@ def main():
             )
 
             heartbeat_failed_dates += (
-                len(
-                    failed_dates
-                )
+                len(failed_dates)
             )
 
-            # =================================================
-            # 실패 날짜 재예약
-            #
-            # timeout 때문에 전체 휴식 X
-            #
-            # 오늘·내일 -> 10초
-            # +2~+14 -> 20초
-            # 먼 날짜 -> 60초
-            # =================================================
-
+            # 실패한 날짜만 짧게 재확인
             reschedule_base = (
                 time.monotonic()
             )
@@ -3739,7 +3193,7 @@ def main():
                 note_clean_cycle()
 
         # ====================================================
-        # 00 / 30분 빠른 전체점검
+        # 00 / 30 빠른 전체점검
         # ====================================================
 
         now_wall = (
@@ -3789,15 +3243,13 @@ def main():
             )
 
             safety_valid_dates = (
-                set(
-                    safety_dates
-                )
+                set(safety_dates)
                 - set(
                     safety_failed
                 )
             )
 
-            # 부분 성공 이벤트는 유지
+            # 부분 성공 이벤트 사용
             safety_valid_events = dict(
                 safety_events
             )
@@ -3845,9 +3297,7 @@ def main():
                             safety_valid_events
                             .items()
                         )
-                        if e.get(
-                            "date"
-                        )
+                        if e.get("date")
                         == date
                     }
 
@@ -3900,11 +3350,7 @@ def main():
                 )
             )
 
-            # ------------------------------------------------
-            # 빠른 전체점검 실패 날짜도
-            # 짧게 다시 확인
-            # ------------------------------------------------
-
+            # 실패 날짜는 짧게 재시도
             reschedule_base = (
                 time.monotonic()
             )
@@ -3916,10 +3362,7 @@ def main():
                     date
                 )
 
-                if (
-                    offset
-                    is None
-                ):
+                if offset is None:
                     continue
 
                 interval = (
@@ -3982,9 +3425,8 @@ def main():
                     f"{len(safety_failed)}"
                 )
 
-            # 지난 00/30 슬롯을
-            # 연속 재실행하지 않고
-            # 다음 슬롯으로 이동
+            # 늦게 끝나도 지난 슬롯을
+            # 연달아 또 실행하지 않음
             while (
                 next_safety_scan_at
                 <= now_kst()
@@ -3998,7 +3440,7 @@ def main():
                 )
 
         # ====================================================
-        # 공식 이벤트 페이지
+        # Official event page
         # ====================================================
 
         now_mono = (
@@ -4037,7 +3479,7 @@ def main():
             )
 
         # ====================================================
-        # 10분 요약
+        # 10-minute heartbeat
         # ====================================================
 
         now_mono = (
@@ -4102,7 +3544,7 @@ def main():
             heartbeat_failed_dates = 0
 
         # ====================================================
-        # 다음 작업까지 짧게 sleep
+        # Sleep
         # ====================================================
 
         next_date_due = (
@@ -4111,8 +3553,7 @@ def main():
             )
             if next_due
             else (
-                now_mono
-                + 1.0
+                now_mono + 1.0
             )
         )
 
@@ -4161,10 +3602,6 @@ def main():
             sleep_for
         )
 
-    # ========================================================
-    # 종료 전 상태 저장
-    # ========================================================
-
     save_seen(
         seen
     )
@@ -4175,9 +3612,7 @@ def main():
 
     print(
         "FINAL SEEN STATE:",
-        len(
-            seen
-        ),
+        len(seen),
     )
 
     print(

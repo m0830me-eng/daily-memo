@@ -89,7 +89,7 @@
       "date": "20260901",
       "end": "12:37",
       "movie": "오디세이",
-      "rest_seat": 258,
+      "rest_seat": 259,
       "schedule_no": "2609011351023",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -97,13 +97,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:56+09:00"
+      "updated_at_kst": "2026-09-01T09:35:48+09:00"
     },
     "1351|20260901|2609011351024|DOLBY": {
       "date": "20260901",
       "end": "16:02",
       "movie": "오디세이",
-      "rest_seat": 227,
+      "rest_seat": 221,
       "schedule_no": "2609011351024",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -111,13 +111,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:56+09:00"
+      "updated_at_kst": "2026-09-01T11:40:47+09:00"
     },
     "1351|20260901|2609011351025|DOLBY": {
       "date": "20260901",
       "end": "19:27",
       "movie": "오디세이",
-      "rest_seat": 224,
+      "rest_seat": 213,
       "schedule_no": "2609011351025",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -125,13 +125,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:56+09:00"
+      "updated_at_kst": "2026-09-01T11:40:47+09:00"
     },
     "1351|20260901|2609011351026|DOLBY": {
       "date": "20260901",
       "end": "22:52",
       "movie": "오디세이",
-      "rest_seat": 159,
+      "rest_seat": 146,
       "schedule_no": "2609011351026",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -139,13 +139,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:56+09:00"
+      "updated_at_kst": "2026-09-01T11:40:47+09:00"
     },
     "1351|20260901|2609011351027|DOLBY": {
       "date": "20260901",
       "end": "26:17",
       "movie": "오디세이",
-      "rest_seat": 346,
+      "rest_seat": 341,
       "schedule_no": "2609011351027",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -153,13 +153,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:56+09:00"
+      "updated_at_kst": "2026-09-01T11:40:47+09:00"
     },
     "1351|20260902|2609021351035|DOLBY": {
       "date": "20260902",
       "end": "12:02",
       "movie": "오디세이",
-      "rest_seat": 296,
+      "rest_seat": 290,
       "schedule_no": "2609021351035",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -167,13 +167,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:00+09:00"
+      "updated_at_kst": "2026-09-01T11:40:43+09:00"
     },
     "1351|20260902|2609021351036|DOLBY": {
       "date": "20260902",
       "end": "15:32",
       "movie": "오디세이",
-      "rest_seat": 249,
+      "rest_seat": 243,
       "schedule_no": "2609021351036",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -181,13 +181,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:00+09:00"
+      "updated_at_kst": "2026-09-01T11:40:43+09:00"
     },
     "1351|20260902|2609021351037|DOLBY": {
       "date": "20260902",
       "end": "19:02",
       "movie": "오디세이",
-      "rest_seat": 247,
+      "rest_seat": 250,
       "schedule_no": "2609021351037",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -195,13 +195,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:00+09:00"
+      "updated_at_kst": "2026-09-01T11:40:43+09:00"
     },
     "1351|20260902|2609021351038|DOLBY": {
       "date": "20260902",
       "end": "22:32",
       "movie": "오디세이",
-      "rest_seat": 126,
+      "rest_seat": 132,
       "schedule_no": "2609021351038",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -209,13 +209,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:00+09:00"
+      "updated_at_kst": "2026-09-01T11:40:43+09:00"
     },
     "1351|20260902|2609021351039|DOLBY": {
       "date": "20260902",
       "end": "26:02",
       "movie": "오디세이",
-      "rest_seat": 339,
+      "rest_seat": 335,
       "schedule_no": "2609021351039",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -223,13 +223,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:00+09:00"
+      "updated_at_kst": "2026-09-01T11:40:43+09:00"
     },
     "1351|20260903|2609031351035|DOLBY": {
       "date": "20260903",
       "end": "12:02",
       "movie": "오디세이",
-      "rest_seat": 296,
+      "rest_seat": 291,
       "schedule_no": "2609031351035",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -237,13 +237,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:31+09:00"
+      "updated_at_kst": "2026-09-01T11:40:03+09:00"
     },
     "1351|20260903|2609031351036|DOLBY": {
       "date": "20260903",
       "end": "15:27",
       "movie": "오디세이",
-      "rest_seat": 285,
+      "rest_seat": 281,
       "schedule_no": "2609031351036",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -251,13 +251,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:31+09:00"
+      "updated_at_kst": "2026-09-01T11:40:03+09:00"
     },
     "1351|20260903|2609031351037|DOLBY": {
       "date": "20260903",
       "end": "18:52",
       "movie": "오디세이",
-      "rest_seat": 262,
+      "rest_seat": 254,
       "schedule_no": "2609031351037",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -265,7 +265,7 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:31+09:00"
+      "updated_at_kst": "2026-09-01T11:40:03+09:00"
     },
     "1351|20260903|2609031351038|DOLBY": {
       "date": "20260903",
@@ -279,13 +279,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:31+09:00"
+      "updated_at_kst": "2026-09-01T11:40:03+09:00"
     },
     "1351|20260903|2609031351039|DOLBY": {
       "date": "20260903",
       "end": "25:42",
       "movie": "오디세이",
-      "rest_seat": 328,
+      "rest_seat": 331,
       "schedule_no": "2609031351039",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -293,7 +293,7 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:58:31+09:00"
+      "updated_at_kst": "2026-09-01T11:40:03+09:00"
     },
     "1351|20260904|2609041351044|DOLBY": {
       "date": "20260904",
@@ -307,13 +307,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:57:40+09:00"
+      "updated_at_kst": "2026-09-01T11:40:06+09:00"
     },
     "1351|20260904|2609041351045|DOLBY": {
       "date": "20260904",
       "end": "15:17",
       "movie": "오디세이",
-      "rest_seat": 298,
+      "rest_seat": 276,
       "schedule_no": "2609041351045",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -321,13 +321,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:57:40+09:00"
+      "updated_at_kst": "2026-09-01T11:40:06+09:00"
     },
     "1351|20260904|2609041351046|DOLBY": {
       "date": "20260904",
       "end": "18:42",
       "movie": "오디세이",
-      "rest_seat": 270,
+      "rest_seat": 243,
       "schedule_no": "2609041351046",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -335,13 +335,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:57:40+09:00"
+      "updated_at_kst": "2026-09-01T11:40:06+09:00"
     },
     "1351|20260904|2609041351047|DOLBY": {
       "date": "20260904",
       "end": "22:07",
       "movie": "오디세이",
-      "rest_seat": 157,
+      "rest_seat": 143,
       "schedule_no": "2609041351047",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -349,13 +349,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:57:40+09:00"
+      "updated_at_kst": "2026-09-01T11:40:06+09:00"
     },
     "1351|20260904|2609041351048|DOLBY": {
       "date": "20260904",
       "end": "25:32",
       "movie": "오디세이",
-      "rest_seat": 264,
+      "rest_seat": 248,
       "schedule_no": "2609041351048",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -363,13 +363,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "DOLBY",
-      "updated_at_kst": "2026-08-31T23:57:40+09:00"
+      "updated_at_kst": "2026-09-01T11:40:06+09:00"
     },
     "1351|20260905|2609051351063|무대인사": {
       "date": "20260905",
       "end": "16:30",
       "movie": "[무대인사] 경주기행",
-      "rest_seat": 23,
+      "rest_seat": 14,
       "schedule_no": "2609051351063",
       "screen": "르 리클라이너 6관(마이어사운드)",
       "sold_out_explicit": false,
@@ -377,13 +377,13 @@
       "status": "OPEN",
       "total_seat": 150,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351064|무대인사": {
       "date": "20260905",
       "end": "16:45",
       "movie": "[무대인사] 경주기행",
-      "rest_seat": 10,
+      "rest_seat": 7,
       "schedule_no": "2609051351064",
       "screen": "르 리클라이너 10관",
       "sold_out_explicit": false,
@@ -391,13 +391,13 @@
       "status": "OPEN",
       "total_seat": 86,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351065|무대인사": {
       "date": "20260905",
       "end": "18:50",
       "movie": "[무대인사] 경주기행",
-      "rest_seat": 39,
+      "rest_seat": 37,
       "schedule_no": "2609051351065",
       "screen": "르 리클라이너 6관(마이어사운드)",
       "sold_out_explicit": false,
@@ -405,7 +405,7 @@
       "status": "OPEN",
       "total_seat": 150,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351081|메가토크": {
       "date": "20260905",
@@ -419,7 +419,7 @@
       "status": "SOLD_OUT",
       "total_seat": 298,
       "type": "메가토크",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351082|무대인사": {
       "date": "20260905",
@@ -433,7 +433,7 @@
       "status": "SOLD_OUT",
       "total_seat": 152,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351083|메가토크": {
       "date": "20260905",
@@ -447,7 +447,7 @@
       "status": "SOLD_OUT",
       "total_seat": 399,
       "type": "메가토크",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351084|무대인사": {
       "date": "20260905",
@@ -461,13 +461,13 @@
       "status": "SOLD_OUT",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351089|무대인사": {
       "date": "20260905",
       "end": "18:19",
       "movie": "[무대인사] 비광",
-      "rest_seat": 21,
+      "rest_seat": 22,
       "schedule_no": "2609051351089",
       "screen": "르 리클라이너 7관(마이어사운드)",
       "sold_out_explicit": false,
@@ -475,13 +475,13 @@
       "status": "OPEN",
       "total_seat": 152,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351090|무대인사": {
       "date": "20260905",
       "end": "18:09",
       "movie": "[무대인사] 비광",
-      "rest_seat": 21,
+      "rest_seat": 22,
       "schedule_no": "2609051351090",
       "screen": "르 리클라이너 8관(마이어사운드)",
       "sold_out_explicit": false,
@@ -489,7 +489,7 @@
       "status": "OPEN",
       "total_seat": 134,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351091|무대인사": {
       "date": "20260905",
@@ -503,13 +503,13 @@
       "status": "OPEN",
       "total_seat": 86,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260905|2609051351092|무대인사": {
       "date": "20260905",
       "end": "20:29",
       "movie": "[무대인사] 비광",
-      "rest_seat": 22,
+      "rest_seat": 18,
       "schedule_no": "2609051351092",
       "screen": "르 리클라이너 8관(마이어사운드)",
       "sold_out_explicit": false,
@@ -517,13 +517,13 @@
       "status": "OPEN",
       "total_seat": 134,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:50+09:00"
+      "updated_at_kst": "2026-09-01T11:40:53+09:00"
     },
     "1351|20260911|2609111351012|메가토크": {
       "date": "20260911",
       "end": "22:14",
       "movie": "[메가토크] 아비정전 4K 리마스터링",
-      "rest_seat": 62,
+      "rest_seat": 25,
       "schedule_no": "2609111351012",
       "screen": "MEGA | LED 4관",
       "sold_out_explicit": false,
@@ -531,13 +531,13 @@
       "status": "OPEN",
       "total_seat": 298,
       "type": "메가토크",
-      "updated_at_kst": "2026-08-31T23:59:01+09:00"
+      "updated_at_kst": "2026-09-01T11:40:52+09:00"
     },
     "1351|20260912|2609121351042|메가토크": {
       "date": "20260912",
       "end": "18:18",
       "movie": "[메가토크] 사진의 얼굴",
-      "rest_seat": 96,
+      "rest_seat": 95,
       "schedule_no": "2609121351042",
       "screen": "르 리클라이너 8관(마이어사운드)",
       "sold_out_explicit": false,
@@ -545,13 +545,69 @@
       "status": "OPEN",
       "total_seat": 134,
       "type": "메가토크",
-      "updated_at_kst": "2026-08-31T23:59:01+09:00"
+      "updated_at_kst": "2026-09-01T11:40:54+09:00"
+    },
+    "1351|20260913|2609131351048|무대인사": {
+      "date": "20260913",
+      "end": "17:54",
+      "movie": "[무대인사] 비광",
+      "rest_seat": 123,
+      "schedule_no": "2609131351048",
+      "screen": "르 리클라이너 5관(마이어사운드)",
+      "sold_out_explicit": false,
+      "start": "15:55",
+      "status": "OPEN",
+      "total_seat": 156,
+      "type": "무대인사",
+      "updated_at_kst": "2026-09-01T11:40:54+09:00"
+    },
+    "1351|20260913|2609131351049|무대인사": {
+      "date": "20260913",
+      "end": "18:09",
+      "movie": "[무대인사] 비광",
+      "rest_seat": 121,
+      "schedule_no": "2609131351049",
+      "screen": "르 리클라이너 7관(마이어사운드)",
+      "sold_out_explicit": false,
+      "start": "16:10",
+      "status": "OPEN",
+      "total_seat": 152,
+      "type": "무대인사",
+      "updated_at_kst": "2026-09-01T11:40:54+09:00"
+    },
+    "1351|20260913|2609131351050|무대인사": {
+      "date": "20260913",
+      "end": "20:14",
+      "movie": "[무대인사] 비광",
+      "rest_seat": 125,
+      "schedule_no": "2609131351050",
+      "screen": "르 리클라이너 5관(마이어사운드)",
+      "sold_out_explicit": false,
+      "start": "18:25",
+      "status": "OPEN",
+      "total_seat": 156,
+      "type": "무대인사",
+      "updated_at_kst": "2026-09-01T11:40:54+09:00"
+    },
+    "1351|20260913|2609131351051|무대인사": {
+      "date": "20260913",
+      "end": "20:29",
+      "movie": "[무대인사] 비광",
+      "rest_seat": 122,
+      "schedule_no": "2609131351051",
+      "screen": "르 리클라이너 7관(마이어사운드)",
+      "sold_out_explicit": false,
+      "start": "18:40",
+      "status": "OPEN",
+      "total_seat": 152,
+      "type": "무대인사",
+      "updated_at_kst": "2026-09-01T11:40:54+09:00"
     },
     "1351|20260916|2609161351013|무대인사": {
       "date": "20260916",
       "end": "18:07",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 73,
+      "rest_seat": 68,
       "schedule_no": "2609161351013",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -559,7 +615,7 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:48+09:00"
+      "updated_at_kst": "2026-09-01T11:40:22+09:00"
     },
     "1351|20260916|2609161351014|무대인사": {
       "date": "20260916",
@@ -573,13 +629,13 @@
       "status": "SOLD_OUT",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:48+09:00"
+      "updated_at_kst": "2026-09-01T11:40:22+09:00"
     },
     "1351|20260916|2609161351015|무대인사": {
       "date": "20260916",
       "end": "20:47",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 26,
+      "rest_seat": 25,
       "schedule_no": "2609161351015",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -587,7 +643,7 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:48+09:00"
+      "updated_at_kst": "2026-09-01T11:40:22+09:00"
     },
     "1351|20260916|2609161351016|무대인사": {
       "date": "20260916",
@@ -601,13 +657,13 @@
       "status": "SOLD_OUT",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:48+09:00"
+      "updated_at_kst": "2026-09-01T11:40:22+09:00"
     },
     "1351|20260924|2609241351022|무대인사": {
       "date": "20260924",
       "end": "17:06",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 11,
+      "rest_seat": 9,
       "schedule_no": "2609241351022",
       "screen": "르 리클라이너 5관(마이어사운드)",
       "sold_out_explicit": false,
@@ -615,13 +671,13 @@
       "status": "OPEN",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:02+09:00"
+      "updated_at_kst": "2026-09-01T11:40:29+09:00"
     },
     "1351|20260924|2609241351023|무대인사": {
       "date": "20260924",
       "end": "17:16",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 118,
+      "rest_seat": 110,
       "schedule_no": "2609241351023",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -629,13 +685,13 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:02+09:00"
+      "updated_at_kst": "2026-09-01T11:40:29+09:00"
     },
     "1351|20260924|2609241351024|무대인사": {
       "date": "20260924",
       "end": "17:31",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 118,
+      "rest_seat": 115,
       "schedule_no": "2609241351024",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -643,13 +699,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:02+09:00"
+      "updated_at_kst": "2026-09-01T11:40:29+09:00"
     },
     "1351|20260924|2609241351025|무대인사": {
       "date": "20260924",
       "end": "20:16",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 145,
+      "rest_seat": 140,
       "schedule_no": "2609241351025",
       "screen": "DOLBY CINEMA [Laser]",
       "sold_out_explicit": false,
@@ -657,13 +713,13 @@
       "status": "OPEN",
       "total_seat": 378,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:02+09:00"
+      "updated_at_kst": "2026-09-01T11:40:29+09:00"
     },
     "1351|20260924|2609241351026|무대인사": {
       "date": "20260924",
       "end": "20:01",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 148,
+      "rest_seat": 144,
       "schedule_no": "2609241351026",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -671,13 +727,13 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:02+09:00"
+      "updated_at_kst": "2026-09-01T11:40:29+09:00"
     },
     "1351|20260924|2609241351027|무대인사": {
       "date": "20260924",
       "end": "19:51",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 21,
+      "rest_seat": 20,
       "schedule_no": "2609241351027",
       "screen": "르 리클라이너 5관(마이어사운드)",
       "sold_out_explicit": false,
@@ -685,7 +741,7 @@
       "status": "OPEN",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:02+09:00"
+      "updated_at_kst": "2026-09-01T11:40:29+09:00"
     },
     "1351|20260925|2609251351072|무대인사": {
       "date": "20260925",
@@ -699,13 +755,13 @@
       "status": "OPEN",
       "total_seat": 150,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:07+09:00"
+      "updated_at_kst": "2026-09-01T11:40:33+09:00"
     },
     "1351|20260925|2609251351073|무대인사": {
       "date": "20260925",
       "end": "15:17",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 9,
+      "rest_seat": 8,
       "schedule_no": "2609251351073",
       "screen": "르 리클라이너 8관(마이어사운드)",
       "sold_out_explicit": false,
@@ -713,13 +769,13 @@
       "status": "OPEN",
       "total_seat": 134,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:07+09:00"
+      "updated_at_kst": "2026-09-01T11:40:33+09:00"
     },
     "1351|20260925|2609251351074|무대인사": {
       "date": "20260925",
       "end": "17:42",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 9,
+      "rest_seat": 5,
       "schedule_no": "2609251351074",
       "screen": "르 리클라이너 6관(마이어사운드)",
       "sold_out_explicit": false,
@@ -727,13 +783,13 @@
       "status": "OPEN",
       "total_seat": 150,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:07+09:00"
+      "updated_at_kst": "2026-09-01T11:40:33+09:00"
     },
     "1351|20260925|2609251351075|무대인사": {
       "date": "20260925",
       "end": "17:57",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 13,
+      "rest_seat": 7,
       "schedule_no": "2609251351075",
       "screen": "르 리클라이너 8관(마이어사운드)",
       "sold_out_explicit": false,
@@ -741,13 +797,13 @@
       "status": "OPEN",
       "total_seat": 134,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:07+09:00"
+      "updated_at_kst": "2026-09-01T11:40:33+09:00"
     },
     "1351|20260926|2609261351024|무대인사": {
       "date": "20260926",
       "end": "14:01",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 121,
+      "rest_seat": 114,
       "schedule_no": "2609261351024",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -755,13 +811,13 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:08+09:00"
+      "updated_at_kst": "2026-09-01T11:40:41+09:00"
     },
     "1351|20260926|2609261351025|무대인사": {
       "date": "20260926",
       "end": "14:11",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 20,
+      "rest_seat": 17,
       "schedule_no": "2609261351025",
       "screen": "르 리클라이너 5관(마이어사운드)",
       "sold_out_explicit": false,
@@ -769,13 +825,13 @@
       "status": "OPEN",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:08+09:00"
+      "updated_at_kst": "2026-09-01T11:40:41+09:00"
     },
     "1351|20260926|2609261351026|무대인사": {
       "date": "20260926",
       "end": "14:26",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 14,
+      "rest_seat": 13,
       "schedule_no": "2609261351026",
       "screen": "르 리클라이너 7관(마이어사운드)",
       "sold_out_explicit": false,
@@ -783,13 +839,13 @@
       "status": "OPEN",
       "total_seat": 152,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:08+09:00"
+      "updated_at_kst": "2026-09-01T11:40:41+09:00"
     },
     "1351|20260926|2609261351027|무대인사": {
       "date": "20260926",
       "end": "16:46",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 108,
+      "rest_seat": 104,
       "schedule_no": "2609261351027",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -797,13 +853,13 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:08+09:00"
+      "updated_at_kst": "2026-09-01T11:40:41+09:00"
     },
     "1351|20260926|2609261351028|무대인사": {
       "date": "20260926",
       "end": "16:56",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 16,
+      "rest_seat": 12,
       "schedule_no": "2609261351028",
       "screen": "르 리클라이너 5관(마이어사운드)",
       "sold_out_explicit": false,
@@ -811,7 +867,7 @@
       "status": "OPEN",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:08+09:00"
+      "updated_at_kst": "2026-09-01T11:40:41+09:00"
     },
     "1351|20260927|2609271351041|무대인사": {
       "date": "20260927",
@@ -825,7 +881,7 @@
       "status": "OPEN",
       "total_seat": 152,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:16+09:00"
+      "updated_at_kst": "2026-09-01T11:40:44+09:00"
     },
     "1351|20260927|2609271351042|무대인사": {
       "date": "20260927",
@@ -839,13 +895,13 @@
       "status": "OPEN",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:16+09:00"
+      "updated_at_kst": "2026-09-01T11:40:44+09:00"
     },
     "1351|20260927|2609271351043|무대인사": {
       "date": "20260927",
       "end": "13:52",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 76,
+      "rest_seat": 51,
       "schedule_no": "2609271351043",
       "screen": "MEGA | LED 3관",
       "sold_out_explicit": false,
@@ -853,13 +909,13 @@
       "status": "OPEN",
       "total_seat": 399,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:16+09:00"
+      "updated_at_kst": "2026-09-01T11:40:44+09:00"
     },
     "1351|20260927|2609271351044|무대인사": {
       "date": "20260927",
       "end": "16:12",
       "movie": "[무대인사] 인턴",
-      "rest_seat": 6,
+      "rest_seat": 4,
       "schedule_no": "2609271351044",
       "screen": "르 리클라이너 7관(마이어사운드)",
       "sold_out_explicit": false,
@@ -867,7 +923,7 @@
       "status": "OPEN",
       "total_seat": 152,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:16+09:00"
+      "updated_at_kst": "2026-09-01T11:40:44+09:00"
     },
     "1351|20260927|2609271351045|무대인사": {
       "date": "20260927",
@@ -881,13 +937,13 @@
       "status": "OPEN",
       "total_seat": 156,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:16+09:00"
+      "updated_at_kst": "2026-09-01T11:40:44+09:00"
     },
     "1351|20261011|2610111351021|무대인사": {
       "date": "20261011",
       "end": "18:01",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 162,
+      "rest_seat": 160,
       "schedule_no": "2610111351021",
       "screen": "MEGA | LED 2관",
       "sold_out_explicit": false,
@@ -895,13 +951,13 @@
       "status": "OPEN",
       "total_seat": 431,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:23+09:00"
+      "updated_at_kst": "2026-09-01T11:36:14+09:00"
     },
     "1351|20261011|2610111351022|무대인사": {
       "date": "20261011",
       "end": "20:46",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 186,
+      "rest_seat": 180,
       "schedule_no": "2610111351022",
       "screen": "MEGA | LED 2관",
       "sold_out_explicit": false,
@@ -909,13 +965,13 @@
       "status": "OPEN",
       "total_seat": 431,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:23+09:00"
+      "updated_at_kst": "2026-09-01T11:36:14+09:00"
     },
     "1351|20261011|2610111351023|무대인사": {
       "date": "20261011",
       "end": "20:31",
       "movie": "[무대인사] 암살자(들)",
-      "rest_seat": 115,
+      "rest_seat": 111,
       "schedule_no": "2610111351023",
       "screen": "MEGA | LED 4관",
       "sold_out_explicit": false,
@@ -923,7 +979,7 @@
       "status": "OPEN",
       "total_seat": 298,
       "type": "무대인사",
-      "updated_at_kst": "2026-08-31T23:58:23+09:00"
+      "updated_at_kst": "2026-09-01T11:36:14+09:00"
     }
   }
 }

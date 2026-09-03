@@ -28,7 +28,7 @@ from curl_cffi import requests
 # - +5~+14일 30초 / +15~+30일 60초 / +31~+42일 300초
 # - 매시 00분/30분: +4~+21일 18일을 2 workers + 0.17초로 빠른 전체점검
 # - 2 workers 고정, 모든 API 요청 시작 간격 최소 0.17초
-# - timeout은 7초 + 새 세션 0.5초 후 1회 즉시 재시도
+# - timeout은 7초 후 즉시 재시도하지 않고 해당 날짜/소스만 실패 처리
 # - 실제 403/429/503만 전역 과부하 보호
 # - 정상 감시는 10분마다 💚 heartbeat 요약
 # ============================================================
@@ -462,9 +462,12 @@ def request_schedule(date, special=False):
         }
         label = "GENERAL"
 
-    last_error = ""
+    # 2026-09-02 안정 기준:
+    # timeout은 즉시 재시도하지 않는다.
+    # timeout 외 실제 연결 오류만 새 세션으로 1회 재시도한다.
+    attempts = 2
 
-    for attempt in range(1, 3):
+    for attempt in range(1, attempts + 1):
         if cycle_aborted():
             return None, True, f"{label} {date} CYCLE ABORTED"
 
@@ -481,53 +484,63 @@ def request_schedule(date, special=False):
                 headers=HEADERS,
                 timeout=SCHEDULE_TIMEOUT,
             )
+
         except Exception as e:
-            last_error = f"{label} {date} ERROR {repr(e)}"
+            error_text = repr(e)
+            lower = error_text.lower()
+            name = type(e).__name__.lower()
+
             reset_thread_session()
 
-            error_text = repr(e).lower()
-            error_name = type(e).__name__.lower()
             is_timeout = (
-                "timeout" in error_name
-                or "timed out" in error_text
-                or "curl: (28)" in error_text
+                "timeout" in name
+                or "timed out" in lower
+                or "curl: (28)" in lower
             )
 
-            # timeout은 메가박스 서버 과부하로 단정하지 않는다.
+            # 핵심: timeout이면 즉시 재시도하지 않고 다음 해당 날짜 주기로 넘긴다.
             if is_timeout:
-                if attempt < 2:
-                    print(
-                        f"↻ {label} {date} timeout -> "
-                        f"{CONNECTION_RETRY_DELAY:.1f}초 후 새 세션으로 1회 즉시 재시도"
-                    )
-                    time.sleep(CONNECTION_RETRY_DELAY)
-                    continue
-                return None, True, last_error
+                return (
+                    None,
+                    True,
+                    f"{label} {date} TIMEOUT",
+                )
 
-            if attempt < 2:
+            if attempt < attempts:
                 time.sleep(CONNECTION_RETRY_DELAY)
                 continue
 
-            return None, True, last_error
+            return (
+                None,
+                True,
+                f"{label} {date} CONNECTION ERROR",
+            )
 
         elapsed = time.monotonic() - started
 
         if response.status_code in TRUE_OVERLOAD_STATUSES:
-            last_error = f"{label} {date} HTTP={response.status_code}"
             register_overload(f"HTTP {response.status_code}")
             reset_thread_session()
-            return None, True, last_error
+            return (
+                None,
+                True,
+                f"{label} {date} HTTP={response.status_code}",
+            )
 
         # 500/502/504는 해당 날짜 요청의 일시 실패로만 처리.
         if response.status_code in TRANSIENT_HTTP_STATUSES:
             reset_thread_session()
-            return None, True, (
-                f"{label} {date} HTTP={response.status_code}"
+            return (
+                None,
+                True,
+                f"{label} {date} HTTP={response.status_code}",
             )
 
         if response.status_code != 200:
-            return None, True, (
-                f"{label} {date} HTTP={response.status_code}"
+            return (
+                None,
+                True,
+                f"{label} {date} HTTP={response.status_code}",
             )
 
         response_preview = (
@@ -537,37 +550,31 @@ def request_schedule(date, special=False):
         )
 
         if "Workload is so high" in response_preview:
-            last_error = (
-                f"{label} {date} SERVER OVERLOAD "
-                f"PREVIEW={response_preview!r}"
-            )
             register_overload("Workload is so high")
             reset_thread_session()
-            return None, True, last_error
+            return (
+                None,
+                True,
+                f"{label} {date} SERVER OVERLOAD",
+            )
 
         try:
             data = response.json()
             rows = extract_movie_form_list(data)
+            return (
+                rows,
+                False,
+                f"{label} {date} HTTP=200 {elapsed:.2f}s ROWS={len(rows)}",
+            )
 
-            retry_text = f" ATTEMPT={attempt}" if attempt > 1 else ""
-            return rows, False, (
-                f"{label} {date} "
-                f"HTTP=200 {elapsed:.2f}s "
-                f"ROWS={len(rows)}{retry_text}"
-            )
-        except Exception as e:
-            preview = (
-                response.text[:120]
-                .replace("\n", " ")
-                .replace("\r", " ")
-            )
-            last_error = (
-                f"{label} {date} JSON ERROR "
-                f"{repr(e)} PREVIEW={preview!r}"
-            )
+        except Exception:
             register_overload("HTTP 200 비정상 JSON")
             reset_thread_session()
-            return None, True, last_error
+            return (
+                None,
+                True,
+                f"{label} {date} JSON ERROR",
+            )
 
     return None, True, f"{label} {date} UNKNOWN ERROR"
 
@@ -887,12 +894,8 @@ def fetch_official_event_signals():
 
         return signals
 
-    except Exception as e:
-        name = type(e).__name__
-        print(
-            f"⚠️ 공식 이벤트 페이지 일시 오류({name}) - "
-            "이번 확인만 건너뛰고 다음 주기에 재시도"
-        )
+    except Exception:
+        # 보조 소스이므로 조용히 다음 주기로 넘김
         return None
 
 

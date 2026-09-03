@@ -1056,6 +1056,64 @@ def collect_all_days(progress=False):
     return all_events, failed_dates
 
 
+
+def _semantic_event_identity(event):
+    """
+    메가박스 내부 playSchdlNo가 재발급되어도 같은 실제 회차로 본다.
+    사용자에게 보이는 안정적인 회차 기준:
+    날짜 + 종류 + 영화 + 시작/종료시간 + 상영관
+    """
+    return (
+        clean_text(event.get("date", "")),
+        clean_text(event.get("type", "")),
+        clean_text(event.get("movie", "")),
+        clean_text(event.get("start", "")).replace(":", ""),
+        clean_text(event.get("end", "")).replace(":", ""),
+        clean_text(event.get("screen", "")),
+    )
+
+
+def _find_semantic_previous(event, show_state):
+    target = _semantic_event_identity(event)
+
+    for old_key, record_item in show_state.items():
+        if not isinstance(record_item, dict):
+            continue
+        if _semantic_event_identity(record_item) == target:
+            return old_key, record_item
+
+    return None, None
+
+
+def reconcile_semantic_seen(events, seen, show_state):
+    """
+    playSchdlNo만 바뀐 기존 회차를 새 회차로 오판하지 않도록
+    현재 key를 seen에 승계한다.
+    """
+    inherited = 0
+
+    for key, event in events.items():
+        if key in seen:
+            continue
+
+        old_key, old_record = _find_semantic_previous(
+            event,
+            show_state,
+        )
+
+        if old_record is not None:
+            seen.add(key)
+            inherited += 1
+
+    if inherited:
+        print(
+            f"♻️ 내부 회차번호 변경 {inherited}건 기존 회차로 승계 "
+            "(중복 Discord 알림 억제)"
+        )
+
+    return inherited
+
+
 # ============================================================
 # Discord / booking-state transitions
 # ============================================================
@@ -1510,6 +1568,11 @@ def main():
                 )
 
             if valid_events or valid_dates:
+                reconcile_semantic_seen(
+                    valid_events,
+                    seen,
+                    show_state,
+                )
                 new_count, _sent_keys = send_new_events(valid_events, seen)
                 cancel_count, sold_out_count = process_booking_states(
                     valid_events,
@@ -1583,6 +1646,11 @@ def main():
                 )
 
             if safety_valid_events or safety_valid_dates:
+                reconcile_semantic_seen(
+                    safety_valid_events,
+                    seen,
+                    show_state,
+                )
                 safety_new, _safety_sent_keys = send_new_events(
                     safety_valid_events,
                     seen,
